@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+  labels:
+    app: zero-scale-gateway
+    app.kubernetes.io/name: zero-scale-gateway
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: zero-scale-gateway
+  template:
+    metadata:
+      labels:
+        app: zero-scale-gateway
+        app.kubernetes.io/name: zero-scale-gateway
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: didi-macbookpro14-3
+      containers:
+      - name: systemd-runner
+        image: localhost:32000/systemd-runner:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 80
+          protocol: TCP
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /run
+          name: run
+        - mountPath: /run/lock
+          name: run-lock
+        - mountPath: /opt/apps
+          name: apps-volume
+        - mountPath: /app/uploads
+          name: bdash-uploads
+      volumes:
+      - name: run
+        emptyDir:
+          medium: Memory
+      - name: run-lock
+        emptyDir:
+          medium: Memory
+      - name: apps-volume
+        persistentVolumeClaim:
+          claimName: zero-scale-binaries-pvc
+      - name: bdash-uploads
+        persistentVolumeClaim:
+          claimName: builds-dash-uploads-longhorn-rwx

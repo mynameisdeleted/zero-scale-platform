@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+  labels:
+    app: zero-scale-gateway
+    app.kubernetes.io/name: zero-scale-gateway
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    app: zero-scale-gateway

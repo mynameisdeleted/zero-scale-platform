@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+  labels:
+    app: zero-scale-gateway
+    app.kubernetes.io/name: zero-scale-gateway
+    app.kubernetes.io/part-of: zero-scale-platform
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: public
+  rules:
+  - host: bdash2.fairfaxmedia.net
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+  - host: bdash2.kube.fairfaxmedia.net
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+  - host: hopscotch.kube.fairfaxmedia.net
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
