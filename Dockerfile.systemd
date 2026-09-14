@@ -1,0 +1,37 @@
+FROM debian:bookworm-slim
+
+# Install systemd, dbus, curl, ca-certificates, xz-utils, and basic utilities
+RUN apt-get update && apt-get install -y \
+    systemd \
+    systemd-sysv \
+    dbus \
+    curl \
+    ca-certificates \
+    xz-utils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install wasmtime WASI WebAssembly runtime
+RUN curl -L https://github.com/bytecodealliance/wasmtime/releases/download/v23.0.2/wasmtime-v23.0.2-x86_64-linux.tar.xz | tar -xJ -C /usr/local/bin --strip-components=1 wasmtime-v23.0.2-x86_64-linux/wasmtime
+
+# Clean up default systemd console gettys
+RUN rm -f /lib/systemd/system/multi-user.target.wants/getty.target \
+    && rm -f /lib/systemd/system/multi-user.target.wants/systemd-logind.service
+
+# Create directories
+RUN mkdir -p /opt/apps
+
+# Copy binaries
+COPY gateway /usr/local/bin/gateway
+COPY mock-app /usr/local/bin/mock-app
+
+# Copy systemd unit files
+COPY services/ /etc/systemd/system/
+
+# Enable gateway service on boot
+RUN systemctl enable gateway.service
+
+# Tell systemd it is running in docker
+ENV container docker
+STOPSIGNAL SIGRTMIN+3
+ENTRYPOINT ["/lib/systemd/systemd"]

@@ -1,0 +1,11 @@
+[Unit]
+Description=Zero-Scale Gateway Proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gateway
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

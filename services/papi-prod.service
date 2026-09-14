@@ -1,0 +1,14 @@
+[Unit]
+Description=Papi-Prod Mock Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/apps/mock-app -port 8912 -name papi-prod
+Restart=always
+DynamicUser=yes
+PrivateTmp=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

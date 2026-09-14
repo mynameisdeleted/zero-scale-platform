@@ -1,0 +1,14 @@
+[Unit]
+Description=Builds-Dash Mock Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/apps/mock-app -port 8934 -name bdash
+Restart=always
+DynamicUser=yes
+PrivateTmp=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

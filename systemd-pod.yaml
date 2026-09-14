@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zero-scale-artifacts
+  namespace: default
+data:
+  artifacts.json: |
+    {
+      "artifacts": {
+        "bdash2.kube.fairfaxmedia.net": {
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/README.md",
+          "type": "elf"
+        },
+        "hopscotch.kube.fairfaxmedia.net": {
+          "url": "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/README.md",
+          "type": "elf"
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zero-scale-binaries-pvc
+  namespace: default
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: longhorn-2-replicas
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+  labels:
+    app: zero-scale-gateway
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: didi-macbookpro14-3
+  containers:
+  - name: systemd-runner
+    image: localhost:32000/systemd-runner:latest
+    securityContext:
+      privileged: true
+    ports:
+    - containerPort: 80
+      name: http
+    volumeMounts:
+    - name: run
+      mountPath: /run
+    - name: run-lock
+      mountPath: /run/lock
+    - name: apps-volume
+      mountPath: /opt/apps
+    - name: bdash-uploads
+      mountPath: /app/uploads
+    - name: config-volume
+      mountPath: /etc/zero-scale
+  volumes:
+  - name: run
+    emptyDir:
+      medium: Memory
+  - name: run-lock
+    emptyDir:
+      medium: Memory
+  - name: apps-volume
+    persistentVolumeClaim:
+      claimName: zero-scale-binaries-pvc
+  - name: bdash-uploads
+    persistentVolumeClaim:
+      claimName: builds-dash-uploads-longhorn-rwx
+  - name: config-volume
+    configMap:
+      name: zero-scale-artifacts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: zero-scale-gateway
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zero-scale-gateway
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: public
+  rules:
+  - host: bdash2.fairfaxmedia.net
+    http:
+      paths:
+      - backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
+  - host: bdash2.kube.fairfaxmedia.net
+    http:
+      paths:
+      - backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
+  - host: hopscotch.kube.fairfaxmedia.net
+    http:
+      paths:
+      - backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+        path: /
+        pathType: ImplementationSpecific
