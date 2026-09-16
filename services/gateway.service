@@ -6,6 +6,8 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/bin/gateway
 Restart=always
+StandardOutput=journal+console
+StandardError=journal+console
 
 [Install]
 WantedBy=multi-user.target
