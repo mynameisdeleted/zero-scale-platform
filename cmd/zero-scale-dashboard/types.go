@@ -3,15 +3,29 @@ package main
 import "time"
 
 type ClusterStatus struct {
-	Timestamp      time.Time         `json:"timestamp"`
-	ClusterVersion string            `json:"cluster_version"`
-	Authenticated  bool              `json:"authenticated"`
-	Summary        ClusterSummary    `json:"summary"`
-	Operators      PlatformOperators `json:"operators"`
-	Nodes          []NodeStatus      `json:"nodes"`
-	ZeroScaleApps  []ZeroScaleApp    `json:"zero_scale_apps"`
-	OtherSites     []SiteGroup       `json:"other_sites"`
-	GitURL         string            `json:"git_url"`
+	Timestamp      time.Time              `json:"timestamp"`
+	ClusterVersion string                 `json:"cluster_version"`
+	Authenticated  bool                   `json:"authenticated"`
+	Summary        ClusterSummary         `json:"summary"`
+	Efficiency     ArchitectureEfficiency `json:"efficiency"`
+	Operators      PlatformOperators      `json:"operators"`
+	Nodes          []NodeStatus           `json:"nodes"`
+	ZeroScaleApps  []ZeroScaleApp         `json:"zero_scale_apps"`
+	OtherSites     []SiteGroup            `json:"other_sites"`
+	GitURL         string                 `json:"git_url"`
+}
+
+type ArchitectureEfficiency struct {
+	TraditionalBaselineMB int64   `json:"traditional_baseline_mb"`
+	CurrentActualMB       int64   `json:"current_actual_mb"`
+	SavedMemoryMB         int64   `json:"saved_memory_mb"`
+	SavedMemoryPercent    float64 `json:"saved_memory_percent"`
+	TotalAppsCount        int     `json:"total_apps_count"`
+	ActiveZeroApps        int     `json:"active_zero_apps"`
+	IdleZeroApps          int     `json:"idle_zero_apps"`
+	DatabaseSavingsMB     int64   `json:"database_savings_mb"`
+	ServerlessSavingsMB   int64   `json:"serverless_savings_mb"`
+	StorageBenefit        string  `json:"storage_benefit"`
 }
 
 type PlatformOperators struct {
