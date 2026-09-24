@@ -319,6 +319,20 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 			LogsURL:     "https://hopscotch.kube.fairfaxmedia.net/_logs",
 			Description: "Hoppscotch API Development & Testing Suite",
 		},
+		{
+			Host:        "status.kube.fairfaxmedia.net",
+			URL:         "https://status.kube.fairfaxmedia.net/",
+			Type:        "elf",
+			LogsURL:     "https://status.kube.fairfaxmedia.net/_logs",
+			Description: "Zero-Scale Platform Cluster & Nodes Dashboard",
+		},
+		{
+			Host:        "kstat.fairfaxmedia.net",
+			URL:         "https://kstat.fairfaxmedia.net/",
+			Type:        "elf",
+			LogsURL:     "https://kstat.fairfaxmedia.net/_logs",
+			Description: "Zero-Scale Platform Status Dashboard (kstat alias)",
+		},
 	}
 
 	// Check if active by querying systemctl if local or checking gateway
