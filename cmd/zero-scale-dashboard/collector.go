@@ -576,12 +576,34 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	traditionalIngressMB := int64(250)
 	traditionalBaselineMB := traditionalAppMemoryMB + traditionalDBMemoryMB + traditionalIngressMB // ~3,150 MB
 
-	// Zero-Scale Platform actuals:
-	// - Active zero-scale apps consume ~12MB each when hot, 0MB when idle.
-	// - Consolidated Gateway pod overhead = ~30MB.
-	// - Shared CloudNativePG cluster = ~280MB (serving all apps with pooled connections).
-	actualAppMemoryMB := int64(activeApps*12) + 30
+	// Calculate sum of zero-scale RAM across all nodes
+	var totalZeroScaleBytes int64
+	for _, n := range status.Nodes {
+		totalZeroScaleBytes += n.ZeroScaleRAMBytes
+	}
+	totalZeroScaleMB := float64(totalZeroScaleBytes) / (1024 * 1024)
+	var zeroClusterPct float64
+	if status.Summary.TotalRAMBytes > 0 {
+		zeroClusterPct = (float64(totalZeroScaleBytes) / float64(status.Summary.TotalRAMBytes)) * 100.0
+	}
+
+	// Live database consumption from ha-postgres pods if available
+	var liveDBBytes int64
+	for key, b := range podMetricsMap {
+		if strings.Contains(key, "ha-postgres") {
+			liveDBBytes += b
+		}
+	}
 	actualDBMemoryMB := int64(280)
+	if liveDBBytes > 0 {
+		actualDBMemoryMB = liveDBBytes / (1024 * 1024)
+	}
+
+	// Zero-Scale Platform actuals:
+	actualAppMemoryMB := int64(activeApps*12) + 30
+	if totalZeroScaleBytes > 0 {
+		actualAppMemoryMB = totalZeroScaleBytes / (1024 * 1024)
+	}
 	currentActualMB := actualAppMemoryMB + actualDBMemoryMB
 
 	savedMB := traditionalBaselineMB - currentActualMB
@@ -594,16 +616,21 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	}
 
 	status.Efficiency = ArchitectureEfficiency{
-		TraditionalBaselineMB: traditionalBaselineMB,
-		CurrentActualMB:       currentActualMB,
-		SavedMemoryMB:         savedMB,
-		SavedMemoryPercent:    savedPct,
-		TotalAppsCount:        totalApps,
-		ActiveZeroApps:        activeApps,
-		IdleZeroApps:          idleApps,
-		DatabaseSavingsMB:     traditionalDBMemoryMB - actualDBMemoryMB,
-		ServerlessSavingsMB:   traditionalAppMemoryMB - actualAppMemoryMB,
-		StorageBenefit:        "12 Distributed Volumes unified under 1 Longhorn storage mesh",
+		TraditionalBaselineMB:        traditionalBaselineMB,
+		CurrentActualMB:              currentActualMB,
+		SavedMemoryMB:                savedMB,
+		SavedMemoryPercent:           savedPct,
+		TotalAppsCount:               totalApps,
+		ActiveZeroApps:               activeApps,
+		IdleZeroApps:                 idleApps,
+		DatabaseSavingsMB:            traditionalDBMemoryMB - actualDBMemoryMB,
+		DatabaseActualMB:             actualDBMemoryMB,
+		DatabaseBaselineMB:           traditionalDBMemoryMB,
+		ServerlessSavingsMB:          traditionalAppMemoryMB - actualAppMemoryMB,
+		TotalZeroScaleFootprintBytes: totalZeroScaleBytes,
+		TotalZeroScaleFootprintMB:    totalZeroScaleMB,
+		ZeroScaleClusterPercent:      zeroClusterPct,
+		StorageBenefit:               "12 Distributed Volumes unified under 1 Longhorn storage mesh",
 	}
 
 	return status, nil

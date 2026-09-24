@@ -16,16 +16,21 @@ type ClusterStatus struct {
 }
 
 type ArchitectureEfficiency struct {
-	TraditionalBaselineMB int64   `json:"traditional_baseline_mb"`
-	CurrentActualMB       int64   `json:"current_actual_mb"`
-	SavedMemoryMB         int64   `json:"saved_memory_mb"`
-	SavedMemoryPercent    float64 `json:"saved_memory_percent"`
-	TotalAppsCount        int     `json:"total_apps_count"`
-	ActiveZeroApps        int     `json:"active_zero_apps"`
-	IdleZeroApps          int     `json:"idle_zero_apps"`
-	DatabaseSavingsMB     int64   `json:"database_savings_mb"`
-	ServerlessSavingsMB   int64   `json:"serverless_savings_mb"`
-	StorageBenefit        string  `json:"storage_benefit"`
+	TraditionalBaselineMB        int64   `json:"traditional_baseline_mb"`
+	CurrentActualMB              int64   `json:"current_actual_mb"`
+	SavedMemoryMB                int64   `json:"saved_memory_mb"`
+	SavedMemoryPercent           float64 `json:"saved_memory_percent"`
+	TotalAppsCount               int     `json:"total_apps_count"`
+	ActiveZeroApps               int     `json:"active_zero_apps"`
+	IdleZeroApps                 int     `json:"idle_zero_apps"`
+	DatabaseSavingsMB            int64   `json:"database_savings_mb"`
+	DatabaseActualMB             int64   `json:"database_actual_mb"`
+	DatabaseBaselineMB           int64   `json:"database_baseline_mb"`
+	ServerlessSavingsMB          int64   `json:"serverless_savings_mb"`
+	TotalZeroScaleFootprintBytes int64   `json:"total_zero_scale_footprint_bytes"`
+	TotalZeroScaleFootprintMB    float64 `json:"total_zero_scale_footprint_mb"`
+	ZeroScaleClusterPercent      float64 `json:"zero_scale_cluster_percent"`
+	StorageBenefit               string  `json:"storage_benefit"`
 }
 
 type PlatformOperators struct {

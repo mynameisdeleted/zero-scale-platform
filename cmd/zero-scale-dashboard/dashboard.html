@@ -563,6 +563,7 @@
     <div class="section-title">
       <span>🚀 Architecture &amp; Zero-Scale Memory Savings</span>
       <span class="badge-count" id="badge-efficiency-saved" style="background: rgba(34, 197, 94, 0.15); color: var(--green); border-color: rgba(34, 197, 94, 0.3);">~90% Memory Saved</span>
+      <span class="badge-count" id="badge-zero-footprint" style="background: rgba(56, 189, 248, 0.15); color: var(--blue); border-color: rgba(56, 189, 248, 0.3);">⚡ Total Zero-Scale: -- MB across all nodes</span>
     </div>
     <div style="font-size:12px; color:var(--text-muted);">Real-time memory savings vs. traditional 24/7 container &amp; database overhead</div>
   </div>
@@ -572,6 +573,9 @@
       <div class="efficiency-title">⚡ Zero-Scale Serverless Savings</div>
       <div class="efficiency-val" id="eff-zero-saved" style="color: var(--green);">-- MB</div>
       <div class="efficiency-desc" id="eff-zero-desc">Reclaimed by scaling idle microservices to 0 MB</div>
+      <div class="efficiency-sub" id="eff-zero-footprint-sub" style="color: #38bdf8; font-weight: 500;">
+        ⚡ Total Cluster Footprint: <span id="eff-zero-footprint-val">-- MB</span> across all nodes
+      </div>
       <div class="efficiency-bar-row">
         <span style="font-size: 11px; color: var(--text-muted);">Zero-Scale Inactive</span>
         <span id="eff-zero-pct" style="font-size: 11px; font-weight: 600; color: var(--green);">--% Saved</span>
@@ -581,14 +585,15 @@
 
     <!-- Card 2: Shared CloudNativePG Savings -->
     <div class="efficiency-card" style="--accent: var(--blue);">
-      <div class="efficiency-title">🐘 CloudNativePG Operator Pooling</div>
-      <div class="efficiency-val" id="eff-db-saved" style="color: var(--blue);">~620 MB</div>
-      <div class="efficiency-desc">Single HA cluster replacing 3+ isolated 24/7 DB pods</div>
+      <div class="efficiency-title">🐘 CloudNativePG Pooling (Savings)</div>
+      <div class="efficiency-val" id="eff-db-saved" style="color: var(--blue);">~620 MB Saved</div>
+      <div class="efficiency-desc" id="eff-db-desc">Saves memory by pooling databases into 1 shared HA cluster vs 3+ separate 24/7 DB pods</div>
+      <div class="efficiency-sub" id="eff-db-actual-sub">Actual Consumption: <strong id="eff-db-actual-val" style="color: #e2e8f0;">~280 MB</strong> (ha-postgres 2/2)</div>
       <div class="efficiency-bar-row">
-        <span style="font-size: 11px; color: var(--text-muted);">Shared Connection Pool</span>
-        <span style="font-size: 11px; font-weight: 600; color: var(--blue);">ha-postgres (2/2)</span>
+        <span style="font-size: 11px; color: var(--text-muted);">Net DB RAM Saved</span>
+        <span id="eff-db-pct" style="font-size: 11px; font-weight: 600; color: var(--blue);">~69% Saved</span>
       </div>
-      <div class="progress-bg"><div class="progress-fill" style="width: 68%; --fill-color: var(--blue);"></div></div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-db-saved" style="width: 69%; --fill-color: var(--blue);"></div></div>
     </div>
 
     <!-- Card 3: Unified Longhorn Storage Mesh -->
@@ -858,9 +863,33 @@ function renderDashboard(data) {
     const elZeroFill = document.getElementById('fill-zero-saved');
     if (elZeroFill) elZeroFill.style.width = `${zeroSavedPct}%`;
 
-    // Card 2: CloudNativePG DB Pooling
+    // Total Zero-Scale Cluster Footprint
+    const zeroFootMB = eff.total_zero_scale_footprint_mb || 0;
+    const zeroClusterPct = eff.zero_scale_cluster_percent || 0;
+    const badgeFootprint = document.getElementById('badge-zero-footprint');
+    if (badgeFootprint) {
+      badgeFootprint.innerText = `⚡ Total Zero-Scale: ${zeroFootMB.toFixed(1)} MB (${zeroClusterPct.toFixed(2)}% of Cluster)`;
+    }
+    const elZeroFootVal = document.getElementById('eff-zero-footprint-val');
+    if (elZeroFootVal) {
+      elZeroFootVal.innerText = `${zeroFootMB.toFixed(1)} MB (${zeroClusterPct.toFixed(2)}% of cluster)`;
+    }
+
+    // Card 2: CloudNativePG DB Pooling (Explicitly Clarifying Savings vs Consumption)
+    const dbSavedMB = eff.database_savings_mb || 620;
+    const dbActualMB = eff.database_actual_mb || 280;
+    const dbBaselineMB = eff.database_baseline_mb || 900;
     const elDbSaved = document.getElementById('eff-db-saved');
-    if (elDbSaved) elDbSaved.innerText = `~${eff.database_savings_mb} MB`;
+    if (elDbSaved) elDbSaved.innerText = `~${dbSavedMB} MB Saved`;
+    const elDbDesc = document.getElementById('eff-db-desc');
+    if (elDbDesc) elDbDesc.innerText = `Saves ~${dbSavedMB} MB net by pooling databases into 1 shared HA cluster vs 3+ separate 24/7 DB pods`;
+    const elDbActualVal = document.getElementById('eff-db-actual-val');
+    if (elDbActualVal) elDbActualVal.innerText = `~${dbActualMB} MB`;
+    const dbSavedPct = dbBaselineMB > 0 ? Math.round((dbSavedMB / dbBaselineMB) * 100) : 69;
+    const elDbPct = document.getElementById('eff-db-pct');
+    if (elDbPct) elDbPct.innerText = `~${dbSavedPct}% Saved`;
+    const elDbFill = document.getElementById('fill-db-saved');
+    if (elDbFill) elDbFill.style.width = `${Math.min(dbSavedPct, 100)}%`;
 
     // Card 4: Total Net Cluster Memory Saved
     const elTotalSaved = document.getElementById('eff-total-saved');
@@ -908,6 +937,10 @@ function renderDashboard(data) {
           <div class="operator-stat-box">
             <span class="operator-stat-label">Cluster Target</span>
             <span class="operator-stat-val">${pg.cluster_name || 'ha-postgres'}</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">RAM Footprint (Savings)</span>
+            <span class="operator-stat-val" style="color: var(--blue);">Consumes ~${data.efficiency ? data.efficiency.database_actual_mb : 280} MB (Saves ~${data.efficiency ? data.efficiency.database_savings_mb : 620} MB)</span>
           </div>
         </div>
       `;
