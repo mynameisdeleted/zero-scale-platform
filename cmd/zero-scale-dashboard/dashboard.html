@@ -204,6 +204,14 @@
   .node-metric { margin-top: 10px; }
   .metric-label-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
 
+  .loading-placeholder {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 16px 4px;
+    font-style: italic;
+  }
+
   /* Node RAM Breakdown & Top Consumers */
   .node-ram-breakdown {
     margin-top: 12px;
@@ -635,7 +643,7 @@
     <div style="font-size:12px; color:var(--text-muted);">High-Availability Data &amp; Distributed Storage Controllers</div>
   </div>
   <div class="operators-grid" id="operators-container">
-    <div style="color:var(--text-muted); font-size:13px;">Querying platform operators...</div>
+    <div class="loading-placeholder" id="placeholder-operators">Querying platform operators...</div>
   </div>
 
   <!-- Nodes Section -->
@@ -646,7 +654,7 @@
     </div>
   </div>
   <div class="nodes-grid" id="nodes-container">
-    <div style="color:var(--text-muted); font-size:13px;">Connecting to cluster node metrics...</div>
+    <div class="loading-placeholder" id="placeholder-nodes">Connecting to cluster node metrics...</div>
   </div>
 
   <!-- Zero-Scale Deployments Section -->
@@ -664,12 +672,12 @@
     </div>
   </div>
   <div class="zero-grid" id="zero-container">
-    <div style="color:var(--text-muted); font-size:13px;">Querying zero-scale runner runtime...</div>
+    <div class="loading-placeholder" id="placeholder-zero">Querying zero-scale runner runtime...</div>
   </div>
 
   <!-- Ingresses and Other Sites -->
   <div id="sites-container">
-    <div style="color:var(--text-muted); font-size:13px;">Discovering cluster ingress services...</div>
+    <div class="loading-placeholder" id="placeholder-sites">Discovering cluster ingress services...</div>
   </div>
 
   <!-- RBAC Authentication Modal -->
@@ -957,6 +965,9 @@ function renderOperators(ops, eff) {
   const opsCont = document.getElementById('operators-container');
   if (!opsCont || !ops) return;
 
+  const ph = document.getElementById('placeholder-operators');
+  if (ph) ph.remove();
+
   const pg = ops.postgres;
   const lh = ops.longhorn;
 
@@ -1081,6 +1092,9 @@ function renderNodes(nodes, isAuthed) {
   const nodesCont = document.getElementById('nodes-container');
   if (!nodesCont || !nodes) return;
 
+  const ph = document.getElementById('placeholder-nodes');
+  if (ph) ph.remove();
+
   nodes.forEach(n => {
     const cardId = 'node-card-' + n.name.replace(/[^a-zA-Z0-9_-]/g, '-');
     let card = document.getElementById(cardId);
@@ -1192,6 +1206,9 @@ function renderZeroScale(zeroApps, isAuthed, token) {
   const zeroCont = document.getElementById('zero-container');
   if (!zeroCont || !zeroApps) return;
 
+  const ph = document.getElementById('placeholder-zero');
+  if (ph) ph.remove();
+
   zeroApps.forEach(app => {
     const cardId = 'zero-card-' + app.host.replace(/[^a-zA-Z0-9_-]/g, '-');
     let card = document.getElementById(cardId);
@@ -1235,6 +1252,9 @@ function renderZeroScale(zeroApps, isAuthed, token) {
 function renderOtherSites(otherSites) {
   const sitesCont = document.getElementById('sites-container');
   if (!sitesCont || !otherSites) return;
+
+  const ph = document.getElementById('placeholder-sites');
+  if (ph) ph.remove();
 
   // Only render once if not yet built; avoid rebuilding static Ingress links every 10s
   if (sitesCont.children.length > 0) return;
