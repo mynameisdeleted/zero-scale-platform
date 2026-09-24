@@ -43,3 +43,23 @@ spec:
             name: zero-scale-gateway
             port:
               number: 80
+  - host: status.kube.fairfaxmedia.net
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80
+  - host: status.fairfaxmedia.net
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: zero-scale-gateway
+            port:
+              number: 80

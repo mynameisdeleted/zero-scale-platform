@@ -8,8 +8,20 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	tokenCache   = make(map[string]cacheEntry)
+	tokenCacheMu sync.Mutex
+)
+
+type cacheEntry struct {
+	allowed bool
+	reason  string
+	expiry  time.Time
+}
 
 // FetchK8sResource dynamically retrieves a ConfigMap or Secret from the in-cluster Kubernetes API
 func FetchK8sResource(resourceType, name, namespace string) (map[string]string, error) {
@@ -73,4 +85,91 @@ func FetchK8sResource(resourceType, name, namespace string) (map[string]string, 
 	}
 
 	return res.Data, nil
+}
+
+// VerifyKubeToken checks if the provided Bearer token is a valid Kubernetes token
+// with permission to read pod logs in the specified namespace via SelfSubjectAccessReview.
+func VerifyKubeToken(token, namespace string) (bool, string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false, "Missing token", nil
+	}
+
+	tokenCacheMu.Lock()
+	if entry, ok := tokenCache[token]; ok && time.Now().Before(entry.expiry) {
+		tokenCacheMu.Unlock()
+		return entry.allowed, entry.reason, nil
+	}
+	tokenCacheMu.Unlock()
+
+	k8sHost := os.Getenv("KUBERNETES_SERVICE_HOST")
+	if k8sHost == "" {
+		k8sHost = "kubernetes.default.svc"
+	}
+	k8sPort := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if k8sPort == "" {
+		k8sPort = "443"
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	reqBody := fmt.Sprintf(`{
+		"apiVersion": "authorization.k8s.io/v1",
+		"kind": "SelfSubjectAccessReview",
+		"spec": {
+			"resourceAttributes": {
+				"namespace": "%s",
+				"verb": "get",
+				"resource": "pods",
+				"subresource": "log"
+			}
+		}
+	}`, namespace)
+
+	reqURL := fmt.Sprintf("https://%s:%s/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", k8sHost, k8sPort)
+	req, err := http.NewRequest("POST", reqURL, strings.NewReader(reqBody))
+	if err != nil {
+		return false, "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, "Invalid or expired Kubernetes token", nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return false, fmt.Sprintf("Kubernetes API returned status %d", resp.StatusCode), nil
+	}
+
+	var res struct {
+		Status struct {
+			Allowed bool   `json:"allowed"`
+			Reason  string `json:"reason"`
+		} `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return false, "", err
+	}
+
+	// Cache successful or denied validation for 2 minutes
+	tokenCacheMu.Lock()
+	tokenCache[token] = cacheEntry{
+		allowed: res.Status.Allowed,
+		reason:  res.Status.Reason,
+		expiry:  time.Now().Add(2 * time.Minute),
+	}
+	tokenCacheMu.Unlock()
+
+	return res.Status.Allowed, res.Status.Reason, nil
 }

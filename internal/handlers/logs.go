@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,15 +15,82 @@ import (
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/runner"
 )
 
-// HandleLogsView handles the web log viewer, SSE stream, and raw CLI text endpoints
+// HandleLogsView handles the web log viewer, SSE stream, and raw CLI text endpoints with RBAC protection
 func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *config.Config, getPortFunc func(string) int) {
 	if appParam := r.URL.Query().Get("app"); appParam != "" {
 		host = appParam
 	}
+
+	// Handle logout
+	if r.URL.Query().Get("logout") == "1" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "kube_token",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+		})
+		http.Redirect(w, r, "/_logs?app="+url.QueryEscape(host), http.StatusSeeOther)
+		return
+	}
+
+	// Extract token from: Authorization header, ?token= param, or kube_token cookie
+	token := ""
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	} else if qToken := r.URL.Query().Get("token"); qToken != "" {
+		token = strings.TrimSpace(qToken)
+	} else if cookie, err := r.Cookie("kube_token"); err == nil {
+		token = strings.TrimSpace(cookie.Value)
+	}
+
+	// Handle form token submission
+	if r.Method == http.MethodPost && r.FormValue("token") != "" {
+		token = strings.TrimSpace(r.FormValue("token"))
+	}
+
+	// Verify token against Kubernetes RBAC via SelfSubjectAccessReview
+	allowed, reason, err := runner.VerifyKubeToken(token, cfg.KubeNamespace)
+	if err != nil {
+		log.Printf("Token verification error: %v", err)
+		http.Error(w, "Failed to verify Kubernetes token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !allowed {
+		isRaw := r.URL.Query().Get("raw") == "1" || strings.Contains(r.Header.Get("Accept"), "text/plain")
+		isStream := r.URL.Query().Get("stream") == "1" || r.URL.Path == "/_logs/stream"
+		if isRaw || isStream {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="kubernetes"`)
+			http.Error(w, fmt.Sprintf("HTTP 401 Unauthorized: Valid Kubernetes token required (%s).\n\nUsage:\n  TOKEN=$(kubectl create token default)\n  curl -H \"Authorization: Bearer $TOKEN\" \"https://%s/_logs?raw=1\"\n", reason, host), http.StatusUnauthorized)
+			return
+		}
+
+		// Render interactive token login page for browser users
+		renderAuthPage(w, host, cfg, reason)
+		return
+	}
+
+	// If token came from form POST or query param, set cookie for seamless session
+	if r.Method == http.MethodPost || r.URL.Query().Get("token") != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "kube_token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		if r.Method == http.MethodPost {
+			http.Redirect(w, r, "/_logs?app="+url.QueryEscape(host), http.StatusSeeOther)
+			return
+		}
+	}
+
 	unitName := fmt.Sprintf("app-%s", host)
 	cliCmd := fmt.Sprintf("kubectl exec -n default deployment/zero-scale-gateway -- journalctl -u %s -f", unitName)
 
-	// Raw output for curl users
+	// Raw output for authenticated curl users
 	if r.URL.Query().Get("raw") == "1" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		out, err := exec.Command("journalctl", "-u", unitName, "-n", "250", "--no-pager").CombinedOutput()
@@ -118,6 +186,7 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
     --green: #2ea043;
     --amber: #d29922;
     --blue: #58a6ff;
+    --red: #f85149;
     --term-bg: #06090f;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,6 +217,7 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
   }
   .badge.active { background: rgba(46, 160, 67, 0.15); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
   .badge.idle { background: rgba(210, 153, 34, 0.15); color: #e3b341; border: 1px solid rgba(210, 153, 34, 0.4); }
+  .badge.rbac { background: rgba(88, 166, 255, 0.15); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.4); }
   .links { display: flex; gap: 10px; flex-wrap: wrap; }
   .btn {
     display: inline-flex;
@@ -166,6 +236,8 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
   .btn:hover { background: #21262d; border-color: #8b949e; color: #fff; }
   .btn-primary { background: #238636; border-color: rgba(240, 246, 252, 0.1); color: #fff; }
   .btn-primary:hover { background: #2ea043; border-color: rgba(240, 246, 252, 0.2); }
+  .btn-danger { color: #f85149; }
+  .btn-danger:hover { background: rgba(248, 81, 73, 0.1); border-color: #f85149; }
   .chips { margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .chip-label { font-size: 12px; color: var(--muted); text-transform: uppercase; font-weight: 600; margin-right: 4px; }
   .chip {
@@ -230,7 +302,7 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
 <div class="container">
   <header>
     <div>
-      <h1>⚡ %s %s</h1>
+      <h1>⚡ %s %s <span class="badge rbac">🔒 RBAC AUTHENTICATED</span></h1>
       <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">Zero-Scale Isolated Journald Logs</div>
     </div>
     <div class="links">
@@ -238,6 +310,7 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
       <a href="%s" target="_blank" class="btn">☸️ Kube Logs</a>
       <a href="%s" target="_blank" class="btn">☸️ Pod Shell</a>
       <a href="/_logs?app=%s&raw=1" target="_blank" class="btn">📄 Raw Text</a>
+      <a href="/_logs?app=%s&logout=1" class="btn btn-danger">🔒 Lock Session</a>
     </div>
   </header>
 
@@ -336,6 +409,7 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
 		cfg.KubeLogURL(),
 		cfg.KubeShellURL(),
 		url.QueryEscape(host),
+		url.QueryEscape(host),
 		appChips.String(),
 		html.EscapeString(cliCmd),
 		html.EscapeString(string(initialLogs)),
@@ -344,4 +418,130 @@ func HandleLogsView(w http.ResponseWriter, r *http.Request, host string, cfg *co
 	)
 
 	w.Write([]byte(pageHTML))
+}
+
+func renderAuthPage(w http.ResponseWriter, host string, cfg *config.Config, reason string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+
+	errorNotice := ""
+	if reason != "" && reason != "Missing token" {
+		errorNotice = fmt.Sprintf(`<div style="background:rgba(248,81,73,0.15); border:1px solid #f85149; color:#ff7b72; padding:10px 14px; border-radius:6px; margin-bottom:16px; font-size:13px;">⚠️ %s</div>`, html.EscapeString(reason))
+	}
+
+	htmlPage := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authentication Required - Zero-Scale Logs</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .auth-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 30px;
+    max-width: 500px;
+    width: 100%%;
+    box-shadow: 0 16px 36px rgba(0,0,0,0.6);
+  }
+  h1 { font-size: 20px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  p { font-size: 14px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+  .code-hint {
+    background: #06090f;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+    font-size: 13px;
+    color: #79c0ff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .copy-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { color: #fff; border-color: var(--muted); }
+  input[type="password"], input[type="text"] {
+    width: 100%%;
+    background: #06090f;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: monospace;
+    margin-bottom: 16px;
+  }
+  input:focus { outline: none; border-color: var(--blue); }
+  button.submit-btn {
+    width: 100%%;
+    background: #238636;
+    color: #fff;
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  button.submit-btn:hover { background: #2ea043; }
+</style>
+</head>
+<body>
+<div class="auth-card">
+  <h1>🔒 Kubernetes RBAC Required</h1>
+  <p>To view logs for <strong>%s</strong>, you must provide a valid Kubernetes token with log viewing permissions in namespace <code>%s</code>.</p>
+
+  %s
+
+  <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600;">GENERATE A TOKEN VIA KUBECTL:</div>
+  <div class="code-hint">
+    <span>kubectl create token default</span>
+    <button class="copy-btn" onclick="navigator.clipboard.writeText('kubectl create token default'); this.innerText='Copied!'; setTimeout(()=>this.innerText='Copy', 1500)">Copy</button>
+  </div>
+
+  <form method="POST" action="/_logs?app=%s">
+    <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600;">ENTER KUBERNETES TOKEN:</div>
+    <input type="password" name="token" placeholder="eyJhbGciOiJSUzI1NiIsImtpZCI6..." required autofocus autocomplete="off" />
+    <button type="submit" class="submit-btn">Authorize & View Logs</button>
+  </form>
+</div>
+</body>
+</html>`,
+		html.EscapeString(host),
+		html.EscapeString(cfg.KubeNamespace),
+		errorNotice,
+		url.QueryEscape(host),
+	)
+
+	w.Write([]byte(htmlPage))
 }

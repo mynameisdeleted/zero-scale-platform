@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes Cluster Status & Services Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☸️</text></svg>">
+<style>
+  :root {
+    --bg: #090d16;
+    --card: #111827;
+    --card-hover: #172238;
+    --border: #1f293d;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --blue: #38bdf8;
+    --blue-glow: rgba(56, 189, 248, 0.15);
+    --green: #22c55e;
+    --green-glow: rgba(34, 197, 94, 0.15);
+    --amber: #f59e0b;
+    --amber-glow: rgba(245, 158, 11, 0.15);
+    --purple: #a855f7;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(circle at 50% 0%, #172554 0%, var(--bg) 40%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+
+  /* Header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand-icon { font-size: 32px; filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.4)); }
+  .brand h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .brand p { font-size: 13px; color: var(--text-muted); }
+  .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+  }
+  .btn:hover { background: var(--card-hover); border-color: var(--blue); color: #fff; }
+  .btn-git {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-color: #f97316;
+    color: #fb923c;
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.2);
+  }
+  .btn-git:hover {
+    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    color: #fff;
+    border-color: #ea580c;
+    box-shadow: 0 0 16px rgba(249, 115, 22, 0.5);
+  }
+  .btn-primary { background: #0284c7; border-color: #38bdf8; color: #fff; }
+  .btn-primary:hover { background: #0369a1; }
+
+  /* Status Indicator */
+  .live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--green);
+    background: var(--green-glow);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    padding: 6px 12px;
+    border-radius: 20px;
+  }
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+  /* Summary Metrics Cards */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .metric-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .metric-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent, var(--blue)), transparent);
+  }
+  .metric-title { font-size: 13px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+  .metric-value { font-size: 28px; font-weight: 700; margin: 6px 0; color: #fff; }
+  .metric-sub { font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; }
+
+  /* Progress Bar */
+  .progress-bg {
+    width: 100%;
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--fill-color, var(--blue));
+    transition: width 0.4s ease;
+  }
+
+  /* Section Title */
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 32px 0 16px 0;
+  }
+  .section-title { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .badge-count { font-size: 11px; background: rgba(56, 189, 248, 0.15); color: var(--blue); padding: 2px 8px; border-radius: 12px; border: 1px solid rgba(56, 189, 248, 0.3); }
+
+  /* Nodes Grid */
+  .nodes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .node-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .node-card:hover { transform: translateY(-2px); border-color: rgba(56, 189, 248, 0.4); }
+  .node-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .node-name { font-size: 16px; font-weight: 600; color: #fff; }
+  .node-role { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-top: 2px; }
+  .status-badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+  .status-badge.ready { background: var(--green-glow); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.3); }
+  .status-badge.notready { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .status-badge.active { background: var(--green-glow); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.3); }
+  .status-badge.idle { background: var(--amber-glow); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+
+  .node-meta { font-size: 12px; color: var(--text-muted); display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 16px 0; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; }
+  .node-metric { margin-top: 10px; }
+  .metric-label-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+
+  /* Zero-Scale Grid */
+  .zero-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .zero-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .zero-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .zero-host { font-size: 15px; font-weight: 600; color: #fff; }
+  .zero-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; min-height: 36px; }
+  .zero-actions { display: flex; gap: 8px; }
+
+  /* Site Cards */
+  .sites-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .site-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    transition: all 0.2s ease;
+  }
+  .site-card:hover {
+    background: var(--card-hover);
+    border-color: var(--blue);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+  }
+  .site-icon { font-size: 26px; flex-shrink: 0; padding-top: 2px; }
+  .site-info { flex-grow: 1; }
+  .site-name { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .site-host { font-size: 12px; color: var(--blue); margin-bottom: 4px; word-break: break-all; }
+  .site-desc { font-size: 12px; color: var(--text-muted); }
+  .site-ns { font-size: 10px; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; color: var(--text-muted); display: inline-block; margin-top: 6px; }
+
+  footer {
+    text-align: center;
+    padding: 32px 0 16px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="brand">
+      <div class="brand-icon">☸️</div>
+      <div>
+        <h1>Kubernetes Cluster Status</h1>
+        <p>Fairfax Media Cloud Infrastructure & Zero-Scale Runtime Platform</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="live-indicator">
+        <span class="pulse-dot"></span>
+        <span id="update-status">Live Monitoring</span>
+      </div>
+      <a href="https://git.fairfaxmedia.net/" target="_blank" class="btn btn-git">
+        <span>📂</span> <strong>git.fairfaxmedia.net</strong>
+      </a>
+      <a href="https://kube.fairfaxmedia.net/" target="_blank" class="btn">
+        <span>☸️</span> Kube Dashboard
+      </a>
+      <button class="btn btn-primary" onclick="loadStatus()">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <!-- Cluster Overview Cards -->
+  <div class="metrics-grid">
+    <div class="metric-card" style="--accent: var(--green);">
+      <div class="metric-title">Cluster Nodes</div>
+      <div class="metric-value" id="val-nodes">-- / --</div>
+      <div class="metric-sub"><span>Nodes Status</span><span id="sub-nodes" style="color:var(--green)">Online</span></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--blue);">
+      <div class="metric-title">CPU Utilization</div>
+      <div class="metric-value" id="val-cpu">-- %</div>
+      <div class="metric-sub"><span id="sub-cpu-detail">-- / -- Cores</span><span id="sub-cpu-pct">-- %</span></div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-cpu" style="width: 0%; --fill-color: var(--blue);"></div></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--purple);">
+      <div class="metric-title">RAM Utilization</div>
+      <div class="metric-value" id="val-ram">-- %</div>
+      <div class="metric-sub"><span id="sub-ram-detail">-- / -- GB</span><span id="sub-ram-pct">-- %</span></div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-ram" style="width: 0%; --fill-color: var(--purple);"></div></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--amber);">
+      <div class="metric-title">Zero-Scale Apps</div>
+      <div class="metric-value" id="val-zero">--</div>
+      <div class="metric-sub"><span id="sub-zero-active">-- Active</span><span>On-Demand Scaled</span></div>
+    </div>
+  </div>
+
+  <!-- Nodes Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>🖥️ Cluster Nodes</span>
+      <span class="badge-count" id="count-nodes">0</span>
+    </div>
+  </div>
+  <div class="nodes-grid" id="nodes-container">
+    <div style="color:var(--text-muted); font-size:13px;">Loading node data...</div>
+  </div>
+
+  <!-- Zero-Scale Deployments Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>⚡ Zero-Scale Deployed Services</span>
+      <span class="badge-count" id="count-zero">0</span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted);">Consolidated systemd runner compute runtime</div>
+  </div>
+  <div class="zero-grid" id="zero-container">
+    <div style="color:var(--text-muted); font-size:13px;">Loading zero-scale apps...</div>
+  </div>
+
+  <!-- Ingresses and Other Sites -->
+  <div id="sites-container">
+    <div style="color:var(--text-muted); font-size:13px;">Loading cluster sites...</div>
+  </div>
+
+  <footer>
+    Fairfax Media Kubernetes Infrastructure &bull; Zero-Scale Platform &bull; <a href="https://git.fairfaxmedia.net/" style="color:var(--blue); text-decoration:none;">git.fairfaxmedia.net</a>
+  </footer>
+</div>
+
+<script>
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+async function loadStatus() {
+  const statusEl = document.getElementById('update-status');
+  statusEl.innerText = 'Updating...';
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) throw new Error('API returned ' + res.status);
+    const data = await res.json();
+    renderDashboard(data);
+    statusEl.innerText = 'Updated ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    console.error(err);
+    statusEl.innerText = 'Sync Error';
+  }
+}
+
+function renderDashboard(data) {
+  // Summary Cards
+  const sum = data.summary;
+  document.getElementById('val-nodes').innerText = `${sum.ready_nodes} / ${sum.total_nodes}`;
+  document.getElementById('count-nodes').innerText = sum.total_nodes;
+  document.getElementById('sub-nodes').innerText = sum.ready_nodes === sum.total_nodes ? 'All Nodes Ready' : 'Degraded';
+
+  const cpuPct = Math.round(sum.cpu_usage_percent || 0);
+  document.getElementById('val-cpu').innerText = `${cpuPct}%`;
+  document.getElementById('sub-cpu-detail').innerText = `${sum.used_cores.toFixed(2)} / ${sum.total_cores} Cores`;
+  document.getElementById('sub-cpu-pct').innerText = `${cpuPct}%`;
+  document.getElementById('fill-cpu').style.width = `${Math.min(cpuPct, 100)}%`;
+
+  const ramPct = Math.round(sum.ram_usage_percent || 0);
+  document.getElementById('val-ram').innerText = `${ramPct}%`;
+  document.getElementById('sub-ram-detail').innerText = `${formatBytes(sum.used_ram_bytes)} / ${formatBytes(sum.total_ram_bytes)}`;
+  document.getElementById('sub-ram-pct').innerText = `${ramPct}%`;
+  document.getElementById('fill-ram').style.width = `${Math.min(ramPct, 100)}%`;
+
+  document.getElementById('val-zero').innerText = `${sum.total_zero_apps}`;
+  document.getElementById('count-zero').innerText = sum.total_zero_apps;
+  document.getElementById('sub-zero-active').innerText = `${sum.active_zero_apps} Active Now`;
+
+  // Render Nodes
+  const nodesCont = document.getElementById('nodes-container');
+  nodesCont.innerHTML = '';
+  data.nodes.forEach(n => {
+    const card = document.createElement('div');
+    card.className = 'node-card';
+    const cpuPct = Math.round(n.cpu_usage_percent || 0);
+    const ramPct = Math.round(n.ram_usage_percent || 0);
+    const readyCls = n.status === 'Ready' ? 'ready' : 'notready';
+
+    card.innerHTML = `
+      <div class="node-top">
+        <div>
+          <div class="node-name">${n.name}</div>
+          <div class="node-role">${n.roles.join(', ')} &bull; ${n.uptime} uptime</div>
+        </div>
+        <span class="status-badge ${readyCls}">${n.status}</span>
+      </div>
+      <div class="node-meta">
+        <div><strong>OS:</strong> ${n.os_image}</div>
+        <div><strong>Kernel:</strong> ${n.kernel_version}</div>
+        <div><strong>Kubelet:</strong> ${n.kubelet_version}</div>
+        <div><strong>Runtime:</strong> ${n.container_engine.split('://')[0]}</div>
+      </div>
+      <div class="node-metric">
+        <div class="metric-label-row">
+          <span>CPU (${n.cpu_cores} Cores)</span>
+          <span>${n.cpu_used_cores.toFixed(2)} cores (${cpuPct}%)</span>
+        </div>
+        <div class="progress-bg">
+          <div class="progress-fill" style="width:${Math.min(cpuPct, 100)}%; --fill-color: var(--blue);"></div>
+        </div>
+      </div>
+      <div class="node-metric">
+        <div class="metric-label-row">
+          <span>RAM (${formatBytes(n.ram_total_bytes)})</span>
+          <span>${formatBytes(n.ram_used_bytes)} (${ramPct}%)</span>
+        </div>
+        <div class="progress-bg">
+          <div class="progress-fill" style="width:${Math.min(ramPct, 100)}%; --fill-color: var(--purple);"></div>
+        </div>
+      </div>
+    `;
+    nodesCont.appendChild(card);
+  });
+
+  // Render Zero Scale
+  const zeroCont = document.getElementById('zero-container');
+  zeroCont.innerHTML = '';
+  data.zero_scale_apps.forEach(app => {
+    const card = document.createElement('div');
+    card.className = 'zero-card';
+    const stateCls = app.state === 'active' ? 'active' : 'idle';
+    const stateLabel = app.state === 'active' ? '🟢 Active' : '💤 Scaled to Zero';
+
+    card.innerHTML = `
+      <div>
+        <div class="zero-top">
+          <div class="zero-host">${app.host}</div>
+          <span class="status-badge ${stateCls}">${stateLabel}</span>
+        </div>
+        <div class="zero-desc">${app.description || 'Zero-scale dynamic service'}</div>
+      </div>
+      <div class="zero-actions">
+        <a href="${app.url}" target="_blank" class="btn btn-primary" style="flex:1; justify-content:center;">🌐 Open App</a>
+        <a href="${app.logs_url}" target="_blank" class="btn" style="flex:1; justify-content:center;">📋 Logs</a>
+      </div>
+    `;
+    zeroCont.appendChild(card);
+  });
+
+  // Render Other Sites Groups
+  const sitesCont = document.getElementById('sites-container');
+  sitesCont.innerHTML = '';
+  data.other_sites.forEach(group => {
+    const section = document.createElement('div');
+    section.innerHTML = `
+      <div class="section-header">
+        <div class="section-title">
+          <span>${group.category}</span>
+          <span class="badge-count">${group.sites.length}</span>
+        </div>
+      </div>
+      <div class="sites-grid" id="group-${group.category.replace(/\s+/g, '-')}"></div>
+    `;
+    sitesCont.appendChild(section);
+
+    const grid = section.querySelector('.sites-grid');
+    group.sites.forEach(site => {
+      const card = document.createElement('a');
+      card.className = 'site-card';
+      card.href = site.url;
+      card.target = '_blank';
+      card.innerHTML = `
+        <div class="site-icon">${site.icon || '🌐'}</div>
+        <div class="site-info">
+          <div class="site-name">${site.name}</div>
+          <div class="site-host">${site.host}</div>
+          <div class="site-desc">${site.description}</div>
+          <span class="site-ns">ns: ${site.namespace}</span>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  });
+}
+
+// Initial load & 10s auto-refresh
+loadStatus();
+setInterval(loadStatus, 10000);
+</script>
+</body>
+</html>
