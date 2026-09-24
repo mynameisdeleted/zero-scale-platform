@@ -352,7 +352,6 @@ func (c *Collector) formatForAuth(raw *ClusterStatus, token string) *ClusterStat
 			nodeClone := n
 			nodeClone.KernelVersion = "🔒 Protected (RBAC Required)"
 			nodeClone.KubeletVersion = "🔒 Protected (RBAC Required)"
-			nodeClone.ContainerEngine = "containerd (🔒 RBAC Protected)"
 			cloneNodes[i] = nodeClone
 		}
 		clone.Nodes = cloneNodes
