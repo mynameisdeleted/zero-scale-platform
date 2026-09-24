@@ -27,8 +27,8 @@ func Load() (*Config, error) {
 	}
 	defaultAppsDir := getEnv("APPS_DIR", "/opt/apps")
 	defaultConfigPath := getEnv("CONFIG_PATH", "/etc/zero-scale/artifacts.json")
-	defaultIdleTimeout := getEnvDuration("IDLE_TIMEOUT", 15*time.Minute)
-	defaultCheckPeriod := getEnvDuration("CHECK_PERIOD", 30*time.Second)
+	defaultIdleTimeout := getEnvDuration("IDLE_TIMEOUT", 10*time.Second)
+	defaultCheckPeriod := getEnvDuration("CHECK_PERIOD", 2*time.Second)
 	defaultNamespace := getEnv("POD_NAMESPACE", "default")
 
 	podName := os.Getenv("POD_NAME")

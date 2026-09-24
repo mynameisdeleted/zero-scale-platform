@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gateway
+ExecStart=/usr/local/bin/gateway -idle-timeout=10s -check-period=2s
 Restart=always
 StandardOutput=journal+console
 StandardError=journal+console

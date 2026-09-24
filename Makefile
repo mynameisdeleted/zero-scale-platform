@@ -35,6 +35,26 @@ deploy-manifests:
 	kubectl apply -f deploy/ -n $(NAMESPACE)
 
 # -------------------------------------------------------------
+# Gateway Deployment (Binary + Service Update + Restart)
+# -------------------------------------------------------------
+deploy-gateway: build-gateway
+	@echo "==> Deploying gateway to active pod in namespace '$(NAMESPACE)'..."
+	@POD=$$(kubectl get pods -l app=$(GATEWAY_APP) -n $(NAMESPACE) --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'); \
+	if [ -z "$$POD" ]; then \
+		echo "ERROR: No running pod found with label app=$(GATEWAY_APP) in namespace $(NAMESPACE)"; \
+		exit 1; \
+	fi; \
+	echo "--> Target Pod: $$POD"; \
+	echo "--> Copying updated gateway binary to /usr/local/bin/gateway..."; \
+	kubectl cp gateway $(NAMESPACE)/$$POD:/usr/local/bin/gateway -c systemd-runner; \
+	kubectl exec $$POD -n $(NAMESPACE) -c systemd-runner -- chmod +x /usr/local/bin/gateway; \
+	echo "--> Updating /etc/systemd/system/gateway.service..."; \
+	kubectl cp services/gateway.service $(NAMESPACE)/$$POD:/etc/systemd/system/gateway.service -c systemd-runner; \
+	kubectl exec $$POD -n $(NAMESPACE) -c systemd-runner -- systemctl daemon-reload; \
+	kubectl exec $$POD -n $(NAMESPACE) -c systemd-runner -- systemctl restart gateway.service; \
+	echo "==> Gateway restarted with fast idle-timeout."
+
+# -------------------------------------------------------------
 # Zero-Scale Dashboard Deployment (Binary + Symlinks + Unit Reset)
 # -------------------------------------------------------------
 deploy-dashboard: build-dashboard
@@ -80,7 +100,7 @@ verify:
 # -------------------------------------------------------------
 # Combined Deploy & Build-and-Deploy
 # -------------------------------------------------------------
-deploy: deploy-manifests deploy-dashboard verify
+deploy: deploy-manifests deploy-gateway deploy-dashboard verify
 	@echo "==> Deployment complete."
 
 build-and-deploy: build deploy
