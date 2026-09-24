@@ -1,4 +1,4 @@
-# Kubernetes Status & Services Dashboard
+# Zero-Scale Platform Dashboard
 
 A lightweight, zero-dependency Kubernetes cluster status dashboard and services directory built for the **Open Cream Cheese** platform and **Zero-Scale Platform** runtime.
 
@@ -14,12 +14,12 @@ A lightweight, zero-dependency Kubernetes cluster status dashboard and services 
 ## Build
 
 ```bash
-go build -o status-dashboard ./cmd/status-dashboard
+go build -o zero-scale-dashboard ./cmd/zero-scale-dashboard
 ```
 
 ## Run
 
 ```bash
 # Run locally (uses local kubectl context or in-cluster service account)
-./status-dashboard -port 8080
+./zero-scale-dashboard -port 8080
 ```

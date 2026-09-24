@@ -48,7 +48,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("================================================================================")
-	log.Printf("🚀 Kubernetes Status Dashboard listening on %s", addr)
+	log.Printf("🚀 Zero-Scale Platform Dashboard listening on %s", addr)
 	log.Printf("📁 Zero-Scale apps directory: %s", *appsDir)
 	log.Printf("🌐 Gateway upstream:          %s", *gatewayURL)
 	log.Printf("🔗 Gitea Source Server:       https://git.fairfaxmedia.net/")

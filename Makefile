@@ -8,7 +8,7 @@ all: build
 build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o gateway ./cmd/gateway
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o mock-app ./cmd/mock-app
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o status-dashboard ./cmd/status-dashboard
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o zero-scale-dashboard ./cmd/zero-scale-dashboard
 
 image: build
 	docker build -t $(IMAGE) -f Dockerfile.systemd .
@@ -25,4 +25,4 @@ restart:
 	kubectl rollout restart deployment/zero-scale-gateway -n $(NAMESPACE)
 
 clean:
-	rm -f gateway mock-app status-dashboard
+	rm -f gateway mock-app zero-scale-dashboard status-dashboard
