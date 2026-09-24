@@ -113,6 +113,11 @@
     box-shadow: 0 0 8px var(--green);
     animation: pulse 2s infinite;
   }
+  .pulse-dot.syncing {
+    background: var(--blue);
+    box-shadow: 0 0 8px var(--blue);
+    animation: pulse 0.7s infinite;
+  }
   @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
 
   /* Summary Metrics Cards */
@@ -777,23 +782,44 @@ function clearToken() {
   loadStatus();
 }
 
+let isUpdating = false;
+
 async function loadStatus() {
+  if (isUpdating) return;
+  isUpdating = true;
+
   const statusEl = document.getElementById('update-status');
-  statusEl.innerText = 'Updating...';
+  const pulseDot = document.querySelector('.pulse-dot');
+  if (pulseDot) pulseDot.classList.add('syncing');
+
   try {
     const headers = {};
     const token = getAuthToken();
     if (token) {
       headers['Authorization'] = 'Bearer ' + token;
     }
-    const res = await fetch('/api/status', { headers });
+
+    // Load https://kstat.fairfaxmedia.net/api/status in background asynchronously
+    let res;
+    try {
+      res = await fetch('https://kstat.fairfaxmedia.net/api/status', { headers });
+    } catch (e) {
+      res = await fetch('/api/status', { headers });
+    }
+
     if (!res.ok) throw new Error('API returned ' + res.status);
     const data = await res.json();
     renderDashboard(data);
-    statusEl.innerText = 'Updated ' + new Date().toLocaleTimeString();
+    if (statusEl) {
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      statusEl.innerText = 'Live • ' + timeStr;
+    }
   } catch (err) {
-    console.error(err);
-    statusEl.innerText = 'Sync Error';
+    console.error('Status sync error:', err);
+    if (statusEl) statusEl.innerText = 'Sync Error (Retrying...)';
+  } finally {
+    isUpdating = false;
+    if (pulseDot) pulseDot.classList.remove('syncing');
   }
 }
 
@@ -805,39 +831,57 @@ function renderDashboard(data) {
   const isAuthed = !!data.authenticated;
   const token = getAuthToken();
 
-  if (isAuthed) {
-    authIcon.innerText = '🟢';
-    authLabel.innerText = 'RBAC Active';
-    authBtn.style.borderColor = 'var(--green)';
-    authBtn.style.color = 'var(--green)';
-  } else {
-    authIcon.innerText = '🔐';
-    authLabel.innerText = 'RBAC Access';
-    authBtn.style.borderColor = 'var(--border)';
-    authBtn.style.color = 'var(--text)';
+  if (authBtn && authIcon && authLabel) {
+    if (isAuthed) {
+      authIcon.innerText = '🟢';
+      authLabel.innerText = 'RBAC Active';
+      authBtn.style.borderColor = 'var(--green)';
+      authBtn.style.color = 'var(--green)';
+    } else {
+      authIcon.innerText = '🔐';
+      authLabel.innerText = 'RBAC Access';
+      authBtn.style.borderColor = 'var(--border)';
+      authBtn.style.color = 'var(--text)';
+    }
   }
 
   // Summary Cards
   const sum = data.summary;
-  document.getElementById('val-nodes').innerText = `${sum.ready_nodes} / ${sum.total_nodes}`;
-  document.getElementById('count-nodes').innerText = sum.total_nodes;
-  document.getElementById('sub-nodes').innerText = sum.ready_nodes === sum.total_nodes ? 'All Nodes Ready' : 'Degraded';
+  if (sum) {
+    const elNodes = document.getElementById('val-nodes');
+    if (elNodes) elNodes.innerText = `${sum.ready_nodes} / ${sum.total_nodes}`;
+    const elCountNodes = document.getElementById('count-nodes');
+    if (elCountNodes) elCountNodes.innerText = sum.total_nodes;
+    const elSubNodes = document.getElementById('sub-nodes');
+    if (elSubNodes) elSubNodes.innerText = sum.ready_nodes === sum.total_nodes ? 'All Nodes Ready' : 'Degraded';
 
-  const cpuPct = Math.round(sum.cpu_usage_percent || 0);
-  document.getElementById('val-cpu').innerText = `${cpuPct}%`;
-  document.getElementById('sub-cpu-detail').innerText = `${sum.used_cores.toFixed(2)} / ${sum.total_cores} Cores`;
-  document.getElementById('sub-cpu-pct').innerText = `${cpuPct}%`;
-  document.getElementById('fill-cpu').style.width = `${Math.min(cpuPct, 100)}%`;
+    const cpuPct = Math.round(sum.cpu_usage_percent || 0);
+    const elValCpu = document.getElementById('val-cpu');
+    if (elValCpu) elValCpu.innerText = `${cpuPct}%`;
+    const elSubCpu = document.getElementById('sub-cpu-detail');
+    if (elSubCpu) elSubCpu.innerText = `${sum.used_cores.toFixed(2)} / ${sum.total_cores} Cores`;
+    const elSubCpuPct = document.getElementById('sub-cpu-pct');
+    if (elSubCpuPct) elSubCpuPct.innerText = `${cpuPct}%`;
+    const elFillCpu = document.getElementById('fill-cpu');
+    if (elFillCpu) elFillCpu.style.width = `${Math.min(cpuPct, 100)}%`;
 
-  const ramPct = Math.round(sum.ram_usage_percent || 0);
-  document.getElementById('val-ram').innerText = `${ramPct}%`;
-  document.getElementById('sub-ram-detail').innerText = `${formatBytes(sum.used_ram_bytes)} / ${formatBytes(sum.total_ram_bytes)}`;
-  document.getElementById('sub-ram-pct').innerText = `${ramPct}%`;
-  document.getElementById('fill-ram').style.width = `${Math.min(ramPct, 100)}%`;
+    const ramPct = Math.round(sum.ram_usage_percent || 0);
+    const elValRam = document.getElementById('val-ram');
+    if (elValRam) elValRam.innerText = `${ramPct}%`;
+    const elSubRam = document.getElementById('sub-ram-detail');
+    if (elSubRam) elSubRam.innerText = `${formatBytes(sum.used_ram_bytes)} / ${formatBytes(sum.total_ram_bytes)}`;
+    const elSubRamPct = document.getElementById('sub-ram-pct');
+    if (elSubRamPct) elSubRamPct.innerText = `${ramPct}%`;
+    const elFillRam = document.getElementById('fill-ram');
+    if (elFillRam) elFillRam.style.width = `${Math.min(ramPct, 100)}%`;
 
-  document.getElementById('val-zero').innerText = `${sum.total_zero_apps}`;
-  document.getElementById('count-zero').innerText = sum.total_zero_apps;
-  document.getElementById('sub-zero-active').innerText = `${sum.active_zero_apps} Active Now`;
+    const elValZero = document.getElementById('val-zero');
+    if (elValZero) elValZero.innerText = `${sum.total_zero_apps}`;
+    const elCountZero = document.getElementById('count-zero');
+    if (elCountZero) elCountZero.innerText = sum.total_zero_apps;
+    const elSubZeroAct = document.getElementById('sub-zero-active');
+    if (elSubZeroAct) elSubZeroAct.innerText = `${sum.active_zero_apps} Active Now`;
+  }
 
   // Render Architecture Efficiency Metrics
   if (data.efficiency) {
@@ -849,7 +893,7 @@ function renderDashboard(data) {
 
     const badgeEff = document.getElementById('badge-efficiency-saved');
     if (badgeEff) badgeEff.innerText = `${effPct}% Memory Saved`;
-    
+
     // Card 1: Zero-Scale Serverless
     const serverlessSavedMB = eff.serverless_savings_mb;
     const serverlessSavedGB = (serverlessSavedMB / 1024).toFixed(2);
@@ -902,92 +946,144 @@ function renderDashboard(data) {
     if (elTotalFill) elTotalFill.style.width = `${Math.min(effPct, 100)}%`;
   }
 
-  // Render Platform Operators
-  const opsCont = document.getElementById('operators-container');
-  if (opsCont && data.operators) {
-    opsCont.innerHTML = '';
-    const pg = data.operators.postgres;
-    const lh = data.operators.longhorn;
+  // Smooth in-place updates for child sections
+  renderOperators(data.operators, data.efficiency);
+  renderNodes(data.nodes, isAuthed);
+  renderZeroScale(data.zero_scale_apps, isAuthed, token);
+  renderOtherSites(data.other_sites);
+}
 
-    if (pg) {
-      const pgCard = document.createElement('div');
+function renderOperators(ops, eff) {
+  const opsCont = document.getElementById('operators-container');
+  if (!opsCont || !ops) return;
+
+  const pg = ops.postgres;
+  const lh = ops.longhorn;
+
+  if (pg) {
+    let pgCard = document.getElementById('op-card-postgres');
+    const pgReadyCls = pg.operator_ready > 0 ? 'ready' : 'notready';
+    const ramText = `Consumes ~${eff ? eff.database_actual_mb : 280} MB (Saves ~${eff ? eff.database_savings_mb : 620} MB)`;
+
+    if (!pgCard) {
+      pgCard = document.createElement('div');
       pgCard.className = 'operator-card';
-      const pgReadyCls = pg.operator_ready > 0 ? 'ready' : 'notready';
+      pgCard.id = 'op-card-postgres';
       pgCard.innerHTML = `
         <div class="operator-top">
           <div>
             <div class="operator-title"><span>🐘</span> CloudNativePG Operator</div>
             <div class="operator-sub">Enterprise PostgreSQL HA Controller &bull; ns: ${pg.namespace || 'cnpg-system'}</div>
           </div>
-          <span class="status-badge ${pgReadyCls}">${pg.status || 'Active'}</span>
+          <span class="status-badge ${pgReadyCls} op-pg-status">${pg.status || 'Active'}</span>
         </div>
         <div class="operator-meta">
           <div class="operator-stat-box">
             <span class="operator-stat-label">Operator Controller</span>
-            <span class="operator-stat-val" style="color: var(--green);">${pg.operator_ready} / ${pg.operator_replicas} Replicas Ready</span>
+            <span class="operator-stat-val op-pg-replicas" style="color: var(--green);">${pg.operator_ready} / ${pg.operator_replicas} Replicas Ready</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">HA Database Cluster</span>
-            <span class="operator-stat-val">${pg.ready_instances} / ${pg.instances} Instances Ready</span>
+            <span class="operator-stat-val op-pg-instances">${pg.ready_instances} / ${pg.instances} Instances Ready</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">Primary Instance</span>
-            <span class="operator-stat-val" style="color: var(--blue);">🟢 ${pg.primary || 'ha-postgres-1'}</span>
+            <span class="operator-stat-val op-pg-primary" style="color: var(--blue);">🟢 ${pg.primary || 'ha-postgres-1'}</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">Cluster Target</span>
-            <span class="operator-stat-val">${pg.cluster_name || 'ha-postgres'}</span>
+            <span class="operator-stat-val op-pg-target">${pg.cluster_name || 'ha-postgres'}</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">RAM Footprint (Savings)</span>
-            <span class="operator-stat-val" style="color: var(--blue);">Consumes ~${data.efficiency ? data.efficiency.database_actual_mb : 280} MB (Saves ~${data.efficiency ? data.efficiency.database_savings_mb : 620} MB)</span>
+            <span class="operator-stat-val op-pg-ram" style="color: var(--blue);">${ramText}</span>
           </div>
         </div>
       `;
       opsCont.appendChild(pgCard);
+    } else {
+      const badge = pgCard.querySelector('.op-pg-status');
+      if (badge) { badge.className = 'status-badge ' + pgReadyCls + ' op-pg-status'; badge.innerText = pg.status || 'Active'; }
+      const replEl = pgCard.querySelector('.op-pg-replicas');
+      if (replEl) replEl.innerText = `${pg.operator_ready} / ${pg.operator_replicas} Replicas Ready`;
+      const instEl = pgCard.querySelector('.op-pg-instances');
+      if (instEl) instEl.innerText = `${pg.ready_instances} / ${pg.instances} Instances Ready`;
+      const primEl = pgCard.querySelector('.op-pg-primary');
+      if (primEl) primEl.innerText = `🟢 ${pg.primary || 'ha-postgres-1'}`;
+      const targEl = pgCard.querySelector('.op-pg-target');
+      if (targEl) targEl.innerText = pg.cluster_name || 'ha-postgres';
+      const ramEl = pgCard.querySelector('.op-pg-ram');
+      if (ramEl) ramEl.innerText = ramText;
     }
+  }
 
-    if (lh) {
-      const lhCard = document.createElement('div');
+  if (lh) {
+    let lhCard = document.getElementById('op-card-longhorn');
+    const lhReadyCls = lh.manager_ready > 0 && lh.manager_ready === lh.manager_desired ? 'ready' : 'notready';
+
+    if (!lhCard) {
+      lhCard = document.createElement('div');
       lhCard.className = 'operator-card';
-      const lhReadyCls = lh.manager_ready > 0 && lh.manager_ready === lh.manager_desired ? 'ready' : 'notready';
+      lhCard.id = 'op-card-longhorn';
       lhCard.innerHTML = `
         <div class="operator-top">
           <div>
             <div class="operator-title"><span>🐮</span> Longhorn Storage Operator</div>
             <div class="operator-sub">Cloud-Native Distributed Block Storage &bull; ns: ${lh.namespace || 'longhorn-system'}</div>
           </div>
-          <span class="status-badge ${lhReadyCls}">${lh.status || 'Healthy'}</span>
+          <span class="status-badge ${lhReadyCls} op-lh-status">${lh.status || 'Healthy'}</span>
         </div>
         <div class="operator-meta">
           <div class="operator-stat-box">
             <span class="operator-stat-label">Storage Manager (DS)</span>
-            <span class="operator-stat-val" style="color: var(--green);">${lh.manager_ready} / ${lh.manager_desired} Nodes Ready</span>
+            <span class="operator-stat-val op-lh-manager" style="color: var(--green);">${lh.manager_ready} / ${lh.manager_desired} Nodes Ready</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">Management UI</span>
-            <span class="operator-stat-val" style="color: var(--green);">${lh.ui_ready} / ${lh.ui_desired} Replicas Ready</span>
+            <span class="operator-stat-val op-lh-ui" style="color: var(--green);">${lh.ui_ready} / ${lh.ui_desired} Replicas Ready</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">Distributed Volumes</span>
-            <span class="operator-stat-val" style="color: var(--blue);">${lh.total_volumes} Active PVs</span>
+            <span class="operator-stat-val op-lh-vols" style="color: var(--blue);">${lh.total_volumes} Active PVs</span>
           </div>
           <div class="operator-stat-box">
             <span class="operator-stat-label">Storage Class</span>
-            <span class="operator-stat-val">${lh.storage_class || 'longhorn-2-replicas'}</span>
+            <span class="operator-stat-val op-lh-sc">${lh.storage_class || 'longhorn-2-replicas'}</span>
           </div>
         </div>
       `;
       opsCont.appendChild(lhCard);
+    } else {
+      const badge = lhCard.querySelector('.op-lh-status');
+      if (badge) { badge.className = 'status-badge ' + lhReadyCls + ' op-lh-status'; badge.innerText = lh.status || 'Healthy'; }
+      const mgrEl = lhCard.querySelector('.op-lh-manager');
+      if (mgrEl) mgrEl.innerText = `${lh.manager_ready} / ${lh.manager_desired} Nodes Ready`;
+      const uiEl = lhCard.querySelector('.op-lh-ui');
+      if (uiEl) uiEl.innerText = `${lh.ui_ready} / ${lh.ui_desired} Replicas Ready`;
+      const volsEl = lhCard.querySelector('.op-lh-vols');
+      if (volsEl) volsEl.innerText = `${lh.total_volumes} Active PVs`;
+      const scEl = lhCard.querySelector('.op-lh-sc');
+      if (scEl) scEl.innerText = lh.storage_class || 'longhorn-2-replicas';
     }
   }
+}
 
-  // Render Nodes
+function renderHogPills(hogs) {
+  if (!hogs || hogs.length === 0) return '';
+  return hogs.map(h => `
+    <span class="hog-pill" title="${h.namespace}/${h.name}">
+      ${h.display} <span class="hog-ram">${formatBytes(h.ram_bytes)}</span>
+    </span>
+  `).join('');
+}
+
+function renderNodes(nodes, isAuthed) {
   const nodesCont = document.getElementById('nodes-container');
-  nodesCont.innerHTML = '';
-  data.nodes.forEach(n => {
-    const card = document.createElement('div');
-    card.className = 'node-card';
+  if (!nodesCont || !nodes) return;
+
+  nodes.forEach(n => {
+    const cardId = 'node-card-' + n.name.replace(/[^a-zA-Z0-9_-]/g, '-');
+    let card = document.getElementById(cardId);
     const cpuPct = Math.round(n.cpu_usage_percent || 0);
     const ramPct = Math.round(n.ram_usage_percent || 0);
     const readyCls = n.status === 'Ready' ? 'ready' : 'notready';
@@ -999,97 +1095,151 @@ function renderDashboard(data) {
       ? `<span class="tag-unlocked">🟢 ${n.kubelet_version}</span>`
       : `<span class="tag-locked" onclick="toggleAuthModal()" title="Click to unlock with RBAC token">${n.kubelet_version}</span>`;
 
-    card.innerHTML = `
-      <div class="node-top">
-        <div>
-          <div class="node-name">${n.name}</div>
-          <div class="node-role">${n.roles.join(', ')} &bull; ${n.uptime} uptime</div>
+    const hogsHtml = renderHogPills(n.top_memory_consumers);
+
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'node-card';
+      card.id = cardId;
+      card.innerHTML = `
+        <div class="node-top">
+          <div>
+            <div class="node-name">${n.name}</div>
+            <div class="node-role"><span class="node-role-text">${n.roles.join(', ')}</span> &bull; <span class="node-uptime-val">${n.uptime}</span> uptime</div>
+          </div>
+          <span class="status-badge ${readyCls} node-status-badge">${n.status}</span>
         </div>
-        <span class="status-badge ${readyCls}">${n.status}</span>
-      </div>
-      <div class="node-meta">
-        <div><strong>OS:</strong> ${n.os_image}</div>
-        <div><strong>Runtime:</strong> ${n.container_engine.split('://')[0]}</div>
-        <div><strong>Kernel:</strong> ${kernelHtml}</div>
-        <div><strong>Kubelet:</strong> ${kubeletHtml}</div>
-      </div>
-      <div class="node-metric">
-        <div class="metric-label-row">
-          <span>CPU (${n.cpu_cores} Cores)</span>
-          <span>${n.cpu_used_cores.toFixed(2)} cores (${cpuPct}%)</span>
+        <div class="node-meta">
+          <div><strong>OS:</strong> <span class="node-os-val">${n.os_image}</span></div>
+          <div><strong>Runtime:</strong> <span class="node-runtime-val">${n.container_engine.split('://')[0]}</span></div>
+          <div><strong>Kernel:</strong> <span class="node-kernel-val">${kernelHtml}</span></div>
+          <div><strong>Kubelet:</strong> <span class="node-kubelet-val">${kubeletHtml}</span></div>
         </div>
-        <div class="progress-bg">
-          <div class="progress-fill" style="width:${Math.min(cpuPct, 100)}%; --fill-color: var(--blue);"></div>
-        </div>
-      </div>
-      <div class="node-metric">
-        <div class="metric-label-row">
-          <span>RAM (${formatBytes(n.ram_total_bytes)})</span>
-          <span>${formatBytes(n.ram_used_bytes)} (${ramPct}%)</span>
-        </div>
-        <div class="progress-bg">
-          <div class="progress-fill" style="width:${Math.min(ramPct, 100)}%; --fill-color: var(--purple);"></div>
-        </div>
-      </div>
-      <div class="node-ram-breakdown">
-        <div class="ram-breakdown-row">
-          <div class="ram-sub-title"><span>⚡ Zero-Scale Footprint:</span></div>
-          <div class="ram-sub-val highlight-green">
-            ${formatBytes(n.zero_scale_ram_bytes || 0)}
-            <span class="ram-pct-badge">${(n.zero_scale_ram_percent || 0).toFixed(1)}% of node</span>
+        <div class="node-metric">
+          <div class="metric-label-row">
+            <span>CPU (${n.cpu_cores} Cores)</span>
+            <span class="node-cpu-val">${n.cpu_used_cores.toFixed(2)} cores (${cpuPct}%)</span>
+          </div>
+          <div class="progress-bg">
+            <div class="progress-fill node-cpu-fill" style="width:${Math.min(cpuPct, 100)}%; --fill-color: var(--blue);"></div>
           </div>
         </div>
-        <div class="ram-breakdown-row">
-          <div class="ram-sub-title"><span>🐘 24/7 Workloads:</span></div>
-          <div class="ram-sub-val">${formatBytes(n.other_workload_ram_bytes || 0)}</div>
+        <div class="node-metric">
+          <div class="metric-label-row">
+            <span>RAM (${formatBytes(n.ram_total_bytes)})</span>
+            <span class="node-ram-val">${formatBytes(n.ram_used_bytes)} (${ramPct}%)</span>
+          </div>
+          <div class="progress-bg">
+            <div class="progress-fill node-ram-fill" style="width:${Math.min(ramPct, 100)}%; --fill-color: var(--purple);"></div>
+          </div>
         </div>
-        ${n.top_memory_consumers && n.top_memory_consumers.length > 0 ? `
-          <div class="node-hogs-section">
-            <div class="node-hogs-header">Top 24/7 Monoliths on Node:</div>
-            <div class="node-hogs-list">
-              ${n.top_memory_consumers.map(h => `
-                <span class="hog-pill" title="${h.namespace}/${h.name}">
-                  ${h.display} <span class="hog-ram">${formatBytes(h.ram_bytes)}</span>
-                </span>
-              `).join('')}
+        <div class="node-ram-breakdown">
+          <div class="ram-breakdown-row">
+            <div class="ram-sub-title"><span>⚡ Zero-Scale Footprint:</span></div>
+            <div class="ram-sub-val highlight-green">
+              <span class="node-zero-ram-val">${formatBytes(n.zero_scale_ram_bytes || 0)}</span>
+              <span class="ram-pct-badge node-zero-pct-badge">${(n.zero_scale_ram_percent || 0).toFixed(1)}% of node</span>
             </div>
           </div>
-        ` : ''}
-      </div>
-    `;
-    nodesCont.appendChild(card);
-  });
+          <div class="ram-breakdown-row">
+            <div class="ram-sub-title"><span>🐘 24/7 Workloads:</span></div>
+            <div class="ram-sub-val"><span class="node-other-ram-val">${formatBytes(n.other_workload_ram_bytes || 0)}</span></div>
+          </div>
+          <div class="node-hogs-section">
+            <div class="node-hogs-header">Top 24/7 Monoliths on Node:</div>
+            <div class="node-hogs-list">${hogsHtml}</div>
+          </div>
+        </div>
+      `;
+      nodesCont.appendChild(card);
+    } else {
+      // In-place smooth update without DOM recreation
+      const badge = card.querySelector('.node-status-badge');
+      if (badge) { badge.className = 'status-badge ' + readyCls + ' node-status-badge'; badge.innerText = n.status; }
+      const upEl = card.querySelector('.node-uptime-val');
+      if (upEl && upEl.innerText !== n.uptime) upEl.innerText = n.uptime;
 
-  // Render Zero Scale
+      const cpuVal = card.querySelector('.node-cpu-val');
+      if (cpuVal) cpuVal.innerText = `${n.cpu_used_cores.toFixed(2)} cores (${cpuPct}%)`;
+      const cpuFill = card.querySelector('.node-cpu-fill');
+      if (cpuFill) cpuFill.style.width = Math.min(cpuPct, 100) + '%';
+
+      const ramVal = card.querySelector('.node-ram-val');
+      if (ramVal) ramVal.innerText = `${formatBytes(n.ram_used_bytes)} (${ramPct}%)`;
+      const ramFill = card.querySelector('.node-ram-fill');
+      if (ramFill) ramFill.style.width = Math.min(ramPct, 100) + '%';
+
+      const zeroRamVal = card.querySelector('.node-zero-ram-val');
+      if (zeroRamVal) zeroRamVal.innerText = formatBytes(n.zero_scale_ram_bytes || 0);
+      const zeroPctBadge = card.querySelector('.node-zero-pct-badge');
+      if (zeroPctBadge) zeroPctBadge.innerText = `${(n.zero_scale_ram_percent || 0).toFixed(1)}% of node`;
+
+      const otherRamVal = card.querySelector('.node-other-ram-val');
+      if (otherRamVal) otherRamVal.innerText = formatBytes(n.other_workload_ram_bytes || 0);
+
+      const kernelVal = card.querySelector('.node-kernel-val');
+      if (kernelVal && kernelVal.innerHTML !== kernelHtml) kernelVal.innerHTML = kernelHtml;
+      const kubeletVal = card.querySelector('.node-kubelet-val');
+      if (kubeletVal && kubeletVal.innerHTML !== kubeletHtml) kubeletVal.innerHTML = kubeletHtml;
+
+      const hogsList = card.querySelector('.node-hogs-list');
+      if (hogsList && hogsList.innerHTML !== hogsHtml) hogsList.innerHTML = hogsHtml;
+    }
+  });
+}
+
+function renderZeroScale(zeroApps, isAuthed, token) {
   const zeroCont = document.getElementById('zero-container');
-  zeroCont.innerHTML = '';
-  data.zero_scale_apps.forEach(app => {
-    const card = document.createElement('div');
-    card.className = 'zero-card';
+  if (!zeroCont || !zeroApps) return;
+
+  zeroApps.forEach(app => {
+    const cardId = 'zero-card-' + app.host.replace(/[^a-zA-Z0-9_-]/g, '-');
+    let card = document.getElementById(cardId);
     const stateCls = app.state === 'active' ? 'active' : 'idle';
     const stateLabel = app.state === 'active' ? '🟢 Active' : '💤 Scaled to Zero';
     const logsUrl = isAuthed && token ? `${app.logs_url}?token=${encodeURIComponent(token)}` : app.logs_url;
 
-    card.innerHTML = `
-      <div>
-        <div class="zero-host">${app.host}</div>
-        <div class="zero-status-row">
-          <span class="status-badge ${stateCls}">${stateLabel}</span>
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'zero-card';
+      card.id = cardId;
+      card.innerHTML = `
+        <div>
+          <div class="zero-host">${app.host}</div>
+          <div class="zero-status-row">
+            <span class="status-badge ${stateCls} zero-badge">${stateLabel}</span>
+          </div>
+          <div class="zero-desc">${app.description || 'Zero-scale dynamic service'}</div>
         </div>
-        <div class="zero-desc">${app.description || 'Zero-scale dynamic service'}</div>
-      </div>
-      <div class="zero-actions">
-        <a href="${app.url}" target="_blank" onclick="handleOpenApp()" class="btn btn-primary" style="flex:1; justify-content:center;">🌐 Open App</a>
-        <a href="${logsUrl}" target="_blank" class="btn" style="flex:1; justify-content:center;">🔐 Logs</a>
-      </div>
-    `;
-    zeroCont.appendChild(card);
+        <div class="zero-actions">
+          <a href="${app.url}" target="_blank" onclick="handleOpenApp()" class="btn btn-primary" style="flex:1; justify-content:center;">🌐 Open App</a>
+          <a href="${logsUrl}" target="_blank" class="btn btn-logs" style="flex:1; justify-content:center;">🔐 Logs</a>
+        </div>
+      `;
+      zeroCont.appendChild(card);
+    } else {
+      // In-place update
+      const badge = card.querySelector('.zero-badge');
+      if (badge && badge.innerText !== stateLabel) {
+        badge.className = 'status-badge ' + stateCls + ' zero-badge';
+        badge.innerText = stateLabel;
+      }
+      const logsLink = card.querySelector('.btn-logs');
+      if (logsLink && logsLink.href !== logsUrl) {
+        logsLink.href = logsUrl;
+      }
+    }
   });
+}
 
-  // Render Other Sites Groups
+function renderOtherSites(otherSites) {
   const sitesCont = document.getElementById('sites-container');
-  sitesCont.innerHTML = '';
-  data.other_sites.forEach(group => {
+  if (!sitesCont || !otherSites) return;
+
+  // Only render once if not yet built; avoid rebuilding static Ingress links every 10s
+  if (sitesCont.children.length > 0) return;
+
+  otherSites.forEach(group => {
     const section = document.createElement('div');
     section.innerHTML = `
       <div class="section-header">
@@ -1127,14 +1277,14 @@ function handleOpenApp() {
   setTimeout(loadStatus, 1500);
 }
 
-// Automatically refresh status whenever the user switches back to this tab
+// Automatically refresh status in background whenever user switches back to this tab
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     loadStatus();
   }
 });
 
-// Initial load & 10s auto-refresh
+// Initial load & 10s auto-refresh in background
 loadStatus();
 setInterval(loadStatus, 10000);
 </script>
