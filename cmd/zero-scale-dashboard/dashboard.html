@@ -260,6 +260,90 @@
     border-top: 1px solid var(--border);
     margin-top: 40px;
   }
+
+  /* RBAC Badges & Modal */
+  .tag-locked {
+    color: var(--amber);
+    background: rgba(245, 158, 11, 0.12);
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px dashed rgba(245, 158, 11, 0.45);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .tag-locked:hover {
+    background: rgba(245, 158, 11, 0.22);
+    border-color: var(--amber);
+  }
+  .tag-unlocked {
+    color: var(--green);
+    background: rgba(34, 197, 94, 0.12);
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid rgba(34, 197, 94, 0.45);
+    font-size: 11.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(4, 7, 13, 0.85);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    max-width: 520px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+  }
+  .modal-card h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+  .modal-card p { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5; }
+  .code-snippet {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--blue);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .modal-textarea {
+    width: 100%;
+    height: 90px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    color: var(--text);
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+    margin-bottom: 14px;
+  }
+  .modal-textarea:focus { outline: none; border-color: var(--blue); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  .modal-msg { font-size: 12px; margin-bottom: 12px; display: none; }
+  .modal-msg.error { color: var(--red); display: block; }
+  .modal-msg.success { color: var(--green); display: block; }
 </style>
 </head>
 <body>
@@ -297,6 +381,9 @@
       <a href="https://kube.fairfaxmedia.net/" target="_blank" class="btn">
         <span>☸️</span> Kube Dashboard
       </a>
+      <button id="btn-auth" class="btn" onclick="toggleAuthModal()" style="border-color: var(--border);">
+        <span id="auth-icon">🔐</span> <span id="auth-label">RBAC Access</span>
+      </button>
       <button class="btn btn-primary" onclick="loadStatus()">🔄 Refresh</button>
     </div>
   </header>
@@ -355,6 +442,31 @@
     <div style="color:var(--text-muted); font-size:13px;">Discovering cluster ingress services...</div>
   </div>
 
+  <!-- RBAC Authentication Modal -->
+  <div class="modal-overlay" id="auth-modal" onclick="if(event.target === this) closeAuthModal()">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0;">🔐 Kubernetes RBAC Access</h3>
+        <button onclick="closeAuthModal()" style="background:none; border:none; color:var(--text-muted); font-size:22px; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+      <p>
+        Enter a Kubernetes ServiceAccount Bearer token to unlock exact Linux kernel versions, cluster patch releases, and system runtime internals.
+      </p>
+      <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">Generate token on workstation or cluster node:</div>
+      <div class="code-snippet">
+        <code>kubectl create token default</code>
+        <button class="btn" style="padding:2px 8px; font-size:11px;" onclick="navigator.clipboard.writeText('kubectl create token default'); alert('Copied to clipboard!')">Copy</button>
+      </div>
+      <textarea class="modal-textarea" id="token-input" placeholder="Paste Bearer Token (ey...)"></textarea>
+      <div class="modal-msg" id="auth-msg"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="clearToken()" id="btn-clear-token" style="display:none; color:var(--red); border-color: rgba(239,68,68,0.3);">Clear / Logout</button>
+        <button class="btn" onclick="closeAuthModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitToken()">Unlock Telemetry</button>
+      </div>
+    </div>
+  </div>
+
   <footer>
     Zero-Scale Platform Dashboard &bull; Fairfax Media Infrastructure &bull; <a href="https://git.fairfaxmedia.net/" style="color:var(--blue); text-decoration:none;">git.fairfaxmedia.net</a>
   </footer>
@@ -369,11 +481,87 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+function getAuthToken() {
+  return sessionStorage.getItem('kube_token') || '';
+}
+
+function toggleAuthModal() {
+  const modal = document.getElementById('auth-modal');
+  const input = document.getElementById('token-input');
+  const clearBtn = document.getElementById('btn-clear-token');
+  const msg = document.getElementById('auth-msg');
+  msg.className = 'modal-msg';
+  msg.innerText = '';
+  
+  const token = getAuthToken();
+  if (token) {
+    input.value = token;
+    clearBtn.style.display = 'inline-flex';
+  } else {
+    input.value = '';
+    clearBtn.style.display = 'none';
+  }
+  modal.classList.add('active');
+  input.focus();
+}
+
+function closeAuthModal() {
+  document.getElementById('auth-modal').classList.remove('active');
+}
+
+async function submitToken() {
+  const token = document.getElementById('token-input').value.trim();
+  const msg = document.getElementById('auth-msg');
+  if (!token) {
+    msg.className = 'modal-msg error';
+    msg.innerText = 'Please enter a token';
+    return;
+  }
+  msg.className = 'modal-msg';
+  msg.innerText = 'Validating token with cluster apiserver...';
+  msg.style.display = 'block';
+
+  try {
+    const res = await fetch('/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const data = await res.json();
+    if (res.ok && data.authenticated) {
+      sessionStorage.setItem('kube_token', token);
+      msg.className = 'modal-msg success';
+      msg.innerText = 'Token verified! Telemetry unlocked.';
+      setTimeout(() => {
+        closeAuthModal();
+        loadStatus();
+      }, 500);
+    } else {
+      msg.className = 'modal-msg error';
+      msg.innerText = 'Invalid token: ' + (data.reason || 'Permission denied');
+    }
+  } catch (err) {
+    msg.className = 'modal-msg error';
+    msg.innerText = 'Verification request failed: ' + err.message;
+  }
+}
+
+function clearToken() {
+  sessionStorage.removeItem('kube_token');
+  document.getElementById('token-input').value = '';
+  closeAuthModal();
+  loadStatus();
+}
+
 async function loadStatus() {
   const statusEl = document.getElementById('update-status');
   statusEl.innerText = 'Updating...';
   try {
-    const res = await fetch('/api/status');
+    const headers = {};
+    const token = getAuthToken();
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+    const res = await fetch('/api/status', { headers });
     if (!res.ok) throw new Error('API returned ' + res.status);
     const data = await res.json();
     renderDashboard(data);
@@ -385,6 +573,25 @@ async function loadStatus() {
 }
 
 function renderDashboard(data) {
+  // Update Auth Button State
+  const authBtn = document.getElementById('btn-auth');
+  const authIcon = document.getElementById('auth-icon');
+  const authLabel = document.getElementById('auth-label');
+  const isAuthed = !!data.authenticated;
+  const token = getAuthToken();
+
+  if (isAuthed) {
+    authIcon.innerText = '🟢';
+    authLabel.innerText = 'RBAC Active';
+    authBtn.style.borderColor = 'var(--green)';
+    authBtn.style.color = 'var(--green)';
+  } else {
+    authIcon.innerText = '🔐';
+    authLabel.innerText = 'RBAC Access';
+    authBtn.style.borderColor = 'var(--border)';
+    authBtn.style.color = 'var(--text)';
+  }
+
   // Summary Cards
   const sum = data.summary;
   document.getElementById('val-nodes').innerText = `${sum.ready_nodes} / ${sum.total_nodes}`;
@@ -417,6 +624,13 @@ function renderDashboard(data) {
     const ramPct = Math.round(n.ram_usage_percent || 0);
     const readyCls = n.status === 'Ready' ? 'ready' : 'notready';
 
+    const kernelHtml = isAuthed
+      ? `<span class="tag-unlocked">🟢 ${n.kernel_version}</span>`
+      : `<span class="tag-locked" onclick="toggleAuthModal()" title="Click to unlock with RBAC token">${n.kernel_version}</span>`;
+    const kubeletHtml = isAuthed
+      ? `<span class="tag-unlocked">🟢 ${n.kubelet_version}</span>`
+      : `<span class="tag-locked" onclick="toggleAuthModal()" title="Click to unlock with RBAC token">${n.kubelet_version}</span>`;
+
     card.innerHTML = `
       <div class="node-top">
         <div>
@@ -427,8 +641,8 @@ function renderDashboard(data) {
       </div>
       <div class="node-meta">
         <div><strong>OS:</strong> ${n.os_image}</div>
-        <div><strong>Kernel:</strong> ${n.kernel_version}</div>
-        <div><strong>Kubelet:</strong> ${n.kubelet_version}</div>
+        <div><strong>Kernel:</strong> ${kernelHtml}</div>
+        <div><strong>Kubelet:</strong> ${kubeletHtml}</div>
         <div><strong>Runtime:</strong> ${n.container_engine.split('://')[0]}</div>
       </div>
       <div class="node-metric">
@@ -461,6 +675,7 @@ function renderDashboard(data) {
     card.className = 'zero-card';
     const stateCls = app.state === 'active' ? 'active' : 'idle';
     const stateLabel = app.state === 'active' ? '🟢 Active' : '💤 Scaled to Zero';
+    const logsUrl = isAuthed && token ? `${app.logs_url}?token=${encodeURIComponent(token)}` : app.logs_url;
 
     card.innerHTML = `
       <div>
@@ -472,7 +687,7 @@ function renderDashboard(data) {
       </div>
       <div class="zero-actions">
         <a href="${app.url}" target="_blank" class="btn btn-primary" style="flex:1; justify-content:center;">🌐 Open App</a>
-        <a href="${app.logs_url}" target="_blank" class="btn" style="flex:1; justify-content:center;">📋 Logs</a>
+        <a href="${logsUrl}" target="_blank" class="btn" style="flex:1; justify-content:center;">🔐 Logs</a>
       </div>
     `;
     zeroCont.appendChild(card);

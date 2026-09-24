@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/runner"
 )
 
 type Collector struct {
@@ -21,6 +23,11 @@ type Collector struct {
 	client     *http.Client
 	appsDir    string
 	gatewayURL string
+
+	cacheMu   sync.RWMutex
+	cachedRaw *ClusterStatus
+	cacheTime time.Time
+	cacheTTL  time.Duration
 }
 
 func NewCollector(gatewayURL, appsDir string) *Collector {
@@ -55,6 +62,7 @@ func NewCollector(gatewayURL, appsDir string) *Collector {
 		client:     client,
 		appsDir:    appsDir,
 		gatewayURL: gatewayURL,
+		cacheTTL:   3 * time.Second,
 	}
 }
 
@@ -296,6 +304,63 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	return status, nil
 }
 
+// GetClusterStatus returns cached or newly gathered cluster status, with RBAC-protected fields masked if unauthenticated.
+func (c *Collector) GetClusterStatus(token string) (*ClusterStatus, error) {
+	c.cacheMu.RLock()
+	if c.cachedRaw != nil && time.Since(c.cacheTime) < c.cacheTTL {
+		raw := c.cachedRaw
+		c.cacheMu.RUnlock()
+		return c.formatForAuth(raw, token), nil
+	}
+	c.cacheMu.RUnlock()
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+	if c.cachedRaw != nil && time.Since(c.cacheTime) < c.cacheTTL {
+		return c.formatForAuth(c.cachedRaw, token), nil
+	}
+
+	raw, err := c.Collect()
+	if err != nil {
+		if c.cachedRaw != nil {
+			return c.formatForAuth(c.cachedRaw, token), nil
+		}
+		return nil, err
+	}
+	c.cachedRaw = raw
+	c.cacheTime = time.Now()
+	return c.formatForAuth(raw, token), nil
+}
+
+func (c *Collector) formatForAuth(raw *ClusterStatus, token string) *ClusterStatus {
+	authed := false
+	token = strings.TrimSpace(token)
+	if token != "" {
+		valid, _, err := runner.VerifyKubeToken(token, "default")
+		if err == nil && valid {
+			authed = true
+		}
+	}
+
+	clone := *raw
+	clone.Authenticated = authed
+
+	if !authed {
+		clone.ClusterVersion = "v1.35.x (🔒 RBAC Protected)"
+		cloneNodes := make([]NodeStatus, len(raw.Nodes))
+		for i, n := range raw.Nodes {
+			nodeClone := n
+			nodeClone.KernelVersion = "🔒 Protected (RBAC Required)"
+			nodeClone.KubeletVersion = "🔒 Protected (RBAC Required)"
+			nodeClone.ContainerEngine = "containerd (🔒 RBAC Protected)"
+			cloneNodes[i] = nodeClone
+		}
+		clone.Nodes = cloneNodes
+	}
+
+	return &clone
+}
+
 func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 	apps := []ZeroScaleApp{
 		{
@@ -408,6 +473,10 @@ func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 	seenHosts["bdash2.kube.fairfaxmedia.net"] = true
 	seenHosts["bdash2.fairfaxmedia.net"] = true
 	seenHosts["hopscotch.kube.fairfaxmedia.net"] = true
+	seenHosts["status.kube.fairfaxmedia.net"] = true
+	seenHosts["status.fairfaxmedia.net"] = true
+	seenHosts["kstat.fairfaxmedia.net"] = true
+	seenHosts["kstat.kube.fairfaxmedia.net"] = true
 
 	for _, item := range ingList.Items {
 		ns := item.Metadata.Namespace

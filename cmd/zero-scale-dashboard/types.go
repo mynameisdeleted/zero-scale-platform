@@ -5,6 +5,7 @@ import "time"
 type ClusterStatus struct {
 	Timestamp      time.Time       `json:"timestamp"`
 	ClusterVersion string          `json:"cluster_version"`
+	Authenticated  bool            `json:"authenticated"`
 	Summary        ClusterSummary  `json:"summary"`
 	Nodes          []NodeStatus    `json:"nodes"`
 	ZeroScaleApps  []ZeroScaleApp  `json:"zero_scale_apps"`
