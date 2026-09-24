@@ -641,9 +641,9 @@ function renderDashboard(data) {
       </div>
       <div class="node-meta">
         <div><strong>OS:</strong> ${n.os_image}</div>
+        <div><strong>Runtime:</strong> ${n.container_engine.split('://')[0]}</div>
         <div><strong>Kernel:</strong> ${kernelHtml}</div>
         <div><strong>Kubelet:</strong> ${kubeletHtml}</div>
-        <div><strong>Runtime:</strong> ${n.container_engine.split('://')[0]}</div>
       </div>
       <div class="node-metric">
         <div class="metric-label-row">
