@@ -546,15 +546,20 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 		},
 	}
 
-	// Check if active by querying systemctl if local or checking gateway
+	// Check if active by querying systemctl if local or checking transient service units
 	for i := range apps {
 		unit := fmt.Sprintf("app-%s", apps[i].Host)
 		cmd := exec.Command("systemctl", "is-active", unit)
 		if err := cmd.Run(); err == nil {
 			apps[i].State = "active"
-		} else {
-			apps[i].State = "idle"
+			continue
 		}
+		transientFile := fmt.Sprintf("/run/systemd/transient/%s.service", unit)
+		if _, err := os.Stat(transientFile); err == nil {
+			apps[i].State = "active"
+			continue
+		}
+		apps[i].State = "idle"
 	}
 
 	return apps
