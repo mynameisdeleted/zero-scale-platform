@@ -62,6 +62,29 @@ func (g *Gateway) StopService(host string) error {
 	return runner.StopService(host)
 }
 
+// DiscoverExistingServices discovers any currently active systemd units
+func (g *Gateway) DiscoverExistingServices() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	runningHosts := runner.ListRunningAppUnits()
+	now := time.Now()
+	for _, host := range runningHosts {
+		unitName := fmt.Sprintf("app-%s", host)
+		port := runner.GetActiveServicePort(unitName)
+		if port > 0 {
+			g.allocatedPorts[host] = port
+		}
+		startTime, err := runner.GetServiceStartTime(unitName)
+		if err == nil && !startTime.IsZero() {
+			g.lastActive[host] = startTime
+		} else {
+			g.lastActive[host] = now
+		}
+		log.Printf("Discovered running unit %s (port %d, lastActive: %v)", unitName, port, g.lastActive[host])
+	}
+}
+
 // ServeHTTP handles incoming HTTP requests, intercepts logs, and reverse proxies
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := r.Host

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
 )
@@ -126,6 +127,19 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(string(out), "already loaded") || strings.Contains(string(out), "fragment file") {
+			log.Printf("Transient unit %s has stale fragment, cleaning up and retrying...", unitName)
+			_ = exec.Command("systemctl", "stop", unitName).Run()
+			_ = exec.Command("systemctl", "reset-failed", unitName).Run()
+			_ = os.Remove(fmt.Sprintf("/run/systemd/transient/%s.service", unitName))
+			_ = exec.Command("systemctl", "daemon-reload").Run()
+			cmdRetry := exec.Command("systemd-run", cmd.Args[1:]...)
+			outRetry, errRetry := cmdRetry.CombinedOutput()
+			if errRetry == nil {
+				return nil
+			}
+			return fmt.Errorf("systemd-run retry failed: %v, output: %s", errRetry, string(outRetry))
+		}
 		return fmt.Errorf("systemd-run failed: %v, output: %s", err, string(out))
 	}
 	return nil
@@ -136,4 +150,37 @@ func StopService(host string) error {
 	unitName := fmt.Sprintf("app-%s", host)
 	cmd := exec.Command("systemctl", "stop", unitName)
 	return cmd.Run()
+}
+
+// ListRunningAppUnits returns the hostnames of all running app-*.service units
+func ListRunningAppUnits() []string {
+	out, err := exec.Command("systemctl", "list-units", "--type=service", "--state=running", "--no-legend", "--no-pager", "app-*.service").Output()
+	if err != nil {
+		return nil
+	}
+	var hosts []string
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.HasPrefix(fields[0], "app-") && strings.HasSuffix(fields[0], ".service") {
+			host := strings.TrimPrefix(fields[0], "app-")
+			host = strings.TrimSuffix(host, ".service")
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+// GetServiceStartTime returns the ActiveEnterTimestamp for a unit
+func GetServiceStartTime(unit string) (time.Time, error) {
+	out, err := exec.Command("systemctl", "show", "-p", "ActiveEnterTimestamp", unit).Output()
+	if err != nil {
+		return time.Time{}, err
+	}
+	str := strings.TrimSpace(string(out))
+	str = strings.TrimPrefix(str, "ActiveEnterTimestamp=")
+	if str == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	return time.Parse("Mon 2006-01-02 15:04:05 MST", str)
 }

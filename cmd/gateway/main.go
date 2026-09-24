@@ -31,6 +31,7 @@ func main() {
 
 	// 2. Instantiate gateway proxy
 	gw := proxy.New(cfg)
+	gw.DiscoverExistingServices()
 
 	// 3. Start background workers
 	rp := reaper.New(cfg, gw.GetLastActiveMap, gw.StopService)
