@@ -199,6 +199,88 @@
   .node-metric { margin-top: 10px; }
   .metric-label-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
 
+  /* Node RAM Breakdown & Top Consumers */
+  .node-ram-breakdown {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(15, 23, 42, 0.65);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ram-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+  }
+  .ram-sub-title {
+    color: var(--text-muted);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ram-sub-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ram-sub-val.highlight-green {
+    color: var(--green);
+  }
+  .ram-pct-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--green);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+  }
+  .node-hogs-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  }
+  .node-hogs-header {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .node-hogs-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .hog-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    background: rgba(30, 41, 59, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 3px 8px;
+    border-radius: 6px;
+    color: #cbd5e1;
+    transition: border-color 0.15s ease;
+  }
+  .hog-pill:hover {
+    border-color: rgba(245, 158, 11, 0.4);
+  }
+  .hog-ram {
+    color: #f59e0b;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+
   /* Efficiency Grid */
   .efficiency-grid {
     display: grid;
@@ -915,6 +997,31 @@ function renderDashboard(data) {
         <div class="progress-bg">
           <div class="progress-fill" style="width:${Math.min(ramPct, 100)}%; --fill-color: var(--purple);"></div>
         </div>
+      </div>
+      <div class="node-ram-breakdown">
+        <div class="ram-breakdown-row">
+          <div class="ram-sub-title"><span>⚡ Zero-Scale Footprint:</span></div>
+          <div class="ram-sub-val highlight-green">
+            ${formatBytes(n.zero_scale_ram_bytes || 0)}
+            <span class="ram-pct-badge">${(n.zero_scale_ram_percent || 0).toFixed(1)}% of node</span>
+          </div>
+        </div>
+        <div class="ram-breakdown-row">
+          <div class="ram-sub-title"><span>🐘 24/7 Workloads:</span></div>
+          <div class="ram-sub-val">${formatBytes(n.other_workload_ram_bytes || 0)}</div>
+        </div>
+        ${n.top_memory_consumers && n.top_memory_consumers.length > 0 ? `
+          <div class="node-hogs-section">
+            <div class="node-hogs-header">Top 24/7 Monoliths on Node:</div>
+            <div class="node-hogs-list">
+              ${n.top_memory_consumers.map(h => `
+                <span class="hog-pill" title="${h.namespace}/${h.name}">
+                  ${h.display} <span class="hog-ram">${formatBytes(h.ram_bytes)}</span>
+                </span>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
     nodesCont.appendChild(card);

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,8 +105,10 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	var rawNodes, rawMetrics, rawIngresses []byte
 	var rawCnpgDeploy, rawCnpgClusters, rawLonghornDs, rawLonghornDeploy, rawLonghornVols []byte
 	var cnpgDeployErr, cnpgClustersErr, longhornDsErr, longhornDeployErr, longhornVolsErr error
+	var rawPods, rawPodMetrics []byte
+	var podsErr, podMetricsErr error
 
-	wg.Add(8)
+	wg.Add(10)
 	go func() {
 		defer wg.Done()
 		rawNodes, nodesErr = c.k8sGet("/api/v1/nodes")
@@ -113,6 +116,14 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	go func() {
 		defer wg.Done()
 		rawMetrics, metricsErr = c.k8sGet("/apis/metrics.k8s.io/v1beta1/nodes")
+	}()
+	go func() {
+		defer wg.Done()
+		rawPods, podsErr = c.k8sGet("/api/v1/pods")
+	}()
+	go func() {
+		defer wg.Done()
+		rawPodMetrics, podMetricsErr = c.k8sGet("/apis/metrics.k8s.io/v1beta1/pods")
 	}()
 	go func() {
 		defer wg.Done()
@@ -169,6 +180,75 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 				memStr := strings.TrimSuffix(item.Usage.Memory, "Ki")
 				memKi, _ := strconv.ParseInt(memStr, 10, 64)
 				nodeMetrics[item.Metadata.Name] = metricUsage{cpuNano: cpuNano, memKi: memKi}
+			}
+		}
+	}
+
+	// Parse pod metrics map (namespace/podName -> total memory bytes)
+	podMetricsMap := make(map[string]int64)
+	if podMetricsErr == nil && len(rawPodMetrics) > 0 {
+		var podMetricList struct {
+			Items []struct {
+				Metadata struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
+				Containers []struct {
+					Usage struct {
+						Memory string `json:"memory"`
+					} `json:"usage"`
+				} `json:"containers"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawPodMetrics, &podMetricList); err == nil {
+			for _, item := range podMetricList.Items {
+				var podMem int64
+				for _, c := range item.Containers {
+					podMem += parseQuantityBytes(c.Usage.Memory)
+				}
+				key := item.Metadata.Namespace + "/" + item.Metadata.Name
+				podMetricsMap[key] = podMem
+			}
+		}
+	}
+
+	type podItem struct {
+		name      string
+		namespace string
+		memBytes  int64
+	}
+	nodePods := make(map[string][]podItem)
+	nodeZeroScaleRAM := make(map[string]int64)
+
+	if podsErr == nil && len(rawPods) > 0 {
+		var podList struct {
+			Items []struct {
+				Metadata struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
+				Spec struct {
+					NodeName string `json:"nodeName"`
+				} `json:"spec"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawPods, &podList); err == nil {
+			for _, p := range podList.Items {
+				node := p.Spec.NodeName
+				if node == "" {
+					continue
+				}
+				key := p.Metadata.Namespace + "/" + p.Metadata.Name
+				mem := podMetricsMap[key]
+				if isZeroScalePod(p.Metadata.Namespace, p.Metadata.Name) {
+					nodeZeroScaleRAM[node] += mem
+				} else {
+					nodePods[node] = append(nodePods[node], podItem{
+						name:      p.Metadata.Name,
+						namespace: p.Metadata.Namespace,
+						memBytes:  mem,
+					})
+				}
 			}
 		}
 	}
@@ -287,6 +367,40 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 				nodeStat.RAMUsagePercent = (float64(usedBytes) / float64(memBytes)) * 100.0
 			}
 		}
+
+		// Zero-Scale RAM vs Other Workload RAM on this node
+		zeroRAM := nodeZeroScaleRAM[n.Metadata.Name]
+		nodeStat.ZeroScaleRAMBytes = zeroRAM
+		if nodeStat.RAMTotalBytes > 0 {
+			nodeStat.ZeroScaleRAMPercent = (float64(zeroRAM) / float64(nodeStat.RAMTotalBytes)) * 100.0
+		}
+		if nodeStat.RAMUsedBytes > zeroRAM {
+			nodeStat.OtherWorkloadRAMBytes = nodeStat.RAMUsedBytes - zeroRAM
+		} else {
+			var sumOther int64
+			for _, p := range nodePods[n.Metadata.Name] {
+				sumOther += p.memBytes
+			}
+			nodeStat.OtherWorkloadRAMBytes = sumOther
+		}
+
+		// Top memory consumers (non-zero-scale 24/7 workloads)
+		podsOnNode := nodePods[n.Metadata.Name]
+		sort.Slice(podsOnNode, func(i, j int) bool {
+			return podsOnNode[i].memBytes > podsOnNode[j].memBytes
+		})
+		var topHogs []MemoryHog
+		for i := 0; i < len(podsOnNode) && i < 3; i++ {
+			if podsOnNode[i].memBytes > 0 {
+				topHogs = append(topHogs, MemoryHog{
+					Name:      podsOnNode[i].name,
+					Namespace: podsOnNode[i].namespace,
+					RAMBytes:  podsOnNode[i].memBytes,
+					Display:   formatPodHogName(podsOnNode[i].namespace, podsOnNode[i].name),
+				})
+			}
+		}
+		nodeStat.TopMemoryConsumers = topHogs
 
 		status.Nodes = append(status.Nodes, nodeStat)
 	}
@@ -779,4 +893,105 @@ func formatDuration(d time.Duration) string {
 	}
 	mins := int(d.Minutes()) % 60
 	return fmt.Sprintf("%dh %dm", hours, mins)
+}
+
+func parseQuantityBytes(str string) int64 {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return 0
+	}
+	if strings.HasSuffix(str, "Ki") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "Ki"), 10, 64)
+		return v * 1024
+	}
+	if strings.HasSuffix(str, "Mi") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "Mi"), 10, 64)
+		return v * 1024 * 1024
+	}
+	if strings.HasSuffix(str, "Gi") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "Gi"), 10, 64)
+		return v * 1024 * 1024 * 1024
+	}
+	if strings.HasSuffix(str, "k") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "k"), 10, 64)
+		return v * 1000
+	}
+	if strings.HasSuffix(str, "M") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "M"), 10, 64)
+		return v * 1000 * 1000
+	}
+	if strings.HasSuffix(str, "G") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "G"), 10, 64)
+		return v * 1000 * 1000 * 1000
+	}
+	v, _ := strconv.ParseInt(str, 10, 64)
+	return v
+}
+
+func formatPodHogName(namespace, podName string) string {
+	lower := strings.ToLower(podName)
+	if strings.Contains(lower, "yacy") {
+		return "YaCy Search"
+	}
+	if strings.Contains(lower, "mastodon-web") {
+		return "Mastodon Web"
+	}
+	if strings.Contains(lower, "mastodon-sidekiq") {
+		return "Mastodon Sidekiq"
+	}
+	if strings.Contains(lower, "mastodon-streaming") {
+		return "Mastodon Streaming"
+	}
+	if strings.Contains(lower, "prometheus-server") {
+		return "Prometheus Server"
+	}
+	if strings.Contains(lower, "odoo") {
+		return "Odoo ERP"
+	}
+	if strings.Contains(lower, "nextcloud") {
+		return "Nextcloud Hub"
+	}
+	if strings.Contains(lower, "ha-postgres") {
+		return "PostgreSQL (" + podName + ")"
+	}
+	if strings.Contains(lower, "instance-manager") {
+		return "Longhorn Engine"
+	}
+	if strings.Contains(lower, "longhorn-manager") {
+		return "Longhorn Manager"
+	}
+	if strings.Contains(lower, "nginx-ingress") {
+		return "NGINX Ingress"
+	}
+	if strings.Contains(lower, "microk8s-microk8s") || strings.Contains(lower, "minio") {
+		return "MinIO Storage"
+	}
+	if strings.Contains(lower, "hoppscotch") {
+		return "Hoppscotch"
+	}
+	if strings.Contains(lower, "builds-dash") {
+		return "Builds Dash"
+	}
+	if strings.Contains(lower, "papi-prod") {
+		return "PAPI Prod"
+	}
+
+	cleanName := podName
+	parts := strings.Split(cleanName, "-")
+	if len(parts) > 2 && len(parts[len(parts)-1]) == 5 {
+		parts = parts[:len(parts)-1]
+		if len(parts) > 1 && (len(parts[len(parts)-1]) >= 8 && len(parts[len(parts)-1]) <= 10) {
+			parts = parts[:len(parts)-1]
+		}
+		cleanName = strings.Join(parts, "-")
+	}
+	if namespace != "" && namespace != "default" {
+		return fmt.Sprintf("%s (%s)", cleanName, namespace)
+	}
+	return cleanName
+}
+
+func isZeroScalePod(namespace, podName string) bool {
+	lower := strings.ToLower(podName)
+	return strings.HasPrefix(lower, "zero-scale-") || strings.Contains(lower, "zero-scale-gateway")
 }

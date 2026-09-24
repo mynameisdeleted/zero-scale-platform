@@ -85,11 +85,22 @@ type NodeStatus struct {
 	CPUCores        int               `json:"cpu_cores"`
 	CPUUsedCores    float64           `json:"cpu_used_cores"`
 	CPUUsagePercent float64           `json:"cpu_usage_percent"`
-	RAMTotalBytes   int64             `json:"ram_total_bytes"`
-	RAMUsedBytes    int64             `json:"ram_used_bytes"`
-	RAMUsagePercent float64           `json:"ram_usage_percent"`
-	EphemeralBytes  int64             `json:"ephemeral_bytes"`
-	Conditions      map[string]string `json:"conditions"`
+	RAMTotalBytes         int64             `json:"ram_total_bytes"`
+	RAMUsedBytes          int64             `json:"ram_used_bytes"`
+	RAMUsagePercent       float64           `json:"ram_usage_percent"`
+	ZeroScaleRAMBytes     int64             `json:"zero_scale_ram_bytes"`
+	ZeroScaleRAMPercent   float64           `json:"zero_scale_ram_percent"`
+	OtherWorkloadRAMBytes int64             `json:"other_workload_ram_bytes"`
+	TopMemoryConsumers    []MemoryHog       `json:"top_memory_consumers"`
+	EphemeralBytes        int64             `json:"ephemeral_bytes"`
+	Conditions            map[string]string `json:"conditions"`
+}
+
+type MemoryHog struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	RAMBytes  int64  `json:"ram_bytes"`
+	Display   string `json:"display"`
 }
 
 type ZeroScaleApp struct {
