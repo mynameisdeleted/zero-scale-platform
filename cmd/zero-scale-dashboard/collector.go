@@ -102,8 +102,10 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	var wg sync.WaitGroup
 	var nodesErr, metricsErr, ingressErr error
 	var rawNodes, rawMetrics, rawIngresses []byte
+	var rawCnpgDeploy, rawCnpgClusters, rawLonghornDs, rawLonghornDeploy, rawLonghornVols []byte
+	var cnpgDeployErr, cnpgClustersErr, longhornDsErr, longhornDeployErr, longhornVolsErr error
 
-	wg.Add(3)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		rawNodes, nodesErr = c.k8sGet("/api/v1/nodes")
@@ -115,6 +117,26 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	go func() {
 		defer wg.Done()
 		rawIngresses, ingressErr = c.k8sGet("/apis/networking.k8s.io/v1/ingresses")
+	}()
+	go func() {
+		defer wg.Done()
+		rawCnpgDeploy, cnpgDeployErr = c.k8sGet("/apis/apps/v1/namespaces/cnpg-system/deployments")
+	}()
+	go func() {
+		defer wg.Done()
+		rawCnpgClusters, cnpgClustersErr = c.k8sGet("/apis/postgresql.cnpg.io/v1/namespaces/default/clusters")
+	}()
+	go func() {
+		defer wg.Done()
+		rawLonghornDs, longhornDsErr = c.k8sGet("/apis/apps/v1/namespaces/longhorn-system/daemonsets")
+	}()
+	go func() {
+		defer wg.Done()
+		rawLonghornDeploy, longhornDeployErr = c.k8sGet("/apis/apps/v1/namespaces/longhorn-system/deployments")
+	}()
+	go func() {
+		defer wg.Done()
+		rawLonghornVols, longhornVolsErr = c.k8sGet("/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes")
 	}()
 	wg.Wait()
 
@@ -299,6 +321,131 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 			totalIng += len(g.Sites)
 		}
 		status.Summary.TotalIngresses = totalIng
+	}
+
+	// Populate CloudNativePG Operator & Cluster info
+	status.Operators.Postgres = PostgresOperatorInfo{
+		Name:      "CloudNativePG",
+		Namespace: "cnpg-system",
+		Status:    "Healthy",
+	}
+	if cnpgDeployErr == nil && len(rawCnpgDeploy) > 0 {
+		var deployList struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Spec struct {
+					Replicas int `json:"replicas"`
+				} `json:"spec"`
+				Status struct {
+					ReadyReplicas int `json:"readyReplicas"`
+					Replicas      int `json:"replicas"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawCnpgDeploy, &deployList); err == nil {
+			for _, item := range deployList.Items {
+				if strings.Contains(item.Metadata.Name, "cnpg") || strings.Contains(item.Metadata.Name, "cloudnative-pg") {
+					status.Operators.Postgres.OperatorReplicas = item.Spec.Replicas
+					status.Operators.Postgres.OperatorReady = item.Status.ReadyReplicas
+					break
+				}
+			}
+		}
+	}
+	if cnpgClustersErr == nil && len(rawCnpgClusters) > 0 {
+		var clusterList struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Spec struct {
+					Instances int `json:"instances"`
+				} `json:"spec"`
+				Status struct {
+					Instances      int    `json:"instances"`
+					ReadyInstances int    `json:"readyInstances"`
+					Phase          string `json:"phase"`
+					TargetPrimary  string `json:"targetPrimary"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawCnpgClusters, &clusterList); err == nil && len(clusterList.Items) > 0 {
+			cItem := clusterList.Items[0]
+			status.Operators.Postgres.ClusterName = cItem.Metadata.Name
+			status.Operators.Postgres.Instances = cItem.Spec.Instances
+			status.Operators.Postgres.ReadyInstances = cItem.Status.ReadyInstances
+			status.Operators.Postgres.Primary = cItem.Status.TargetPrimary
+			if cItem.Status.Phase != "" {
+				status.Operators.Postgres.Status = cItem.Status.Phase
+			}
+		}
+	}
+
+	// Populate Longhorn Storage Operator info
+	status.Operators.Longhorn = LonghornOperatorInfo{
+		Name:         "Longhorn",
+		Namespace:    "longhorn-system",
+		StorageClass: "longhorn-2-replicas",
+		Status:       "Healthy",
+	}
+	if longhornDsErr == nil && len(rawLonghornDs) > 0 {
+		var dsList struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Status struct {
+					DesiredNumberScheduled int `json:"desiredNumberScheduled"`
+					NumberReady            int `json:"numberReady"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawLonghornDs, &dsList); err == nil {
+			for _, item := range dsList.Items {
+				if item.Metadata.Name == "longhorn-manager" {
+					status.Operators.Longhorn.ManagerDesired = item.Status.DesiredNumberScheduled
+					status.Operators.Longhorn.ManagerReady = item.Status.NumberReady
+					break
+				}
+			}
+		}
+	}
+	if longhornDeployErr == nil && len(rawLonghornDeploy) > 0 {
+		var deployList struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+				Spec struct {
+					Replicas int `json:"replicas"`
+				} `json:"spec"`
+				Status struct {
+					ReadyReplicas int `json:"readyReplicas"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(rawLonghornDeploy, &deployList); err == nil {
+			for _, item := range deployList.Items {
+				if item.Metadata.Name == "longhorn-ui" {
+					status.Operators.Longhorn.UIDesired = item.Spec.Replicas
+					status.Operators.Longhorn.UIReady = item.Status.ReadyReplicas
+					break
+				}
+			}
+		}
+	}
+	if longhornVolsErr == nil && len(rawLonghornVols) > 0 {
+		var volList struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal(rawLonghornVols, &volList); err == nil {
+			status.Operators.Longhorn.TotalVolumes = len(volList.Items)
+		}
+	}
+	if status.Operators.Longhorn.ManagerReady < status.Operators.Longhorn.ManagerDesired && status.Operators.Longhorn.ManagerDesired > 0 {
+		status.Operators.Longhorn.Status = "Degraded"
 	}
 
 	return status, nil

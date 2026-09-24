@@ -3,14 +3,44 @@ package main
 import "time"
 
 type ClusterStatus struct {
-	Timestamp      time.Time       `json:"timestamp"`
-	ClusterVersion string          `json:"cluster_version"`
-	Authenticated  bool            `json:"authenticated"`
-	Summary        ClusterSummary  `json:"summary"`
-	Nodes          []NodeStatus    `json:"nodes"`
-	ZeroScaleApps  []ZeroScaleApp  `json:"zero_scale_apps"`
-	OtherSites     []SiteGroup     `json:"other_sites"`
-	GitURL         string          `json:"git_url"`
+	Timestamp      time.Time         `json:"timestamp"`
+	ClusterVersion string            `json:"cluster_version"`
+	Authenticated  bool              `json:"authenticated"`
+	Summary        ClusterSummary    `json:"summary"`
+	Operators      PlatformOperators `json:"operators"`
+	Nodes          []NodeStatus      `json:"nodes"`
+	ZeroScaleApps  []ZeroScaleApp    `json:"zero_scale_apps"`
+	OtherSites     []SiteGroup       `json:"other_sites"`
+	GitURL         string            `json:"git_url"`
+}
+
+type PlatformOperators struct {
+	Postgres PostgresOperatorInfo `json:"postgres"`
+	Longhorn LonghornOperatorInfo `json:"longhorn"`
+}
+
+type PostgresOperatorInfo struct {
+	Name             string `json:"name"`
+	Namespace        string `json:"namespace"`
+	Status           string `json:"status"`
+	OperatorReplicas int    `json:"operator_replicas"`
+	OperatorReady    int    `json:"operator_ready"`
+	ClusterName      string `json:"cluster_name"`
+	Instances        int    `json:"instances"`
+	ReadyInstances   int    `json:"ready_instances"`
+	Primary          string `json:"primary"`
+}
+
+type LonghornOperatorInfo struct {
+	Name           string `json:"name"`
+	Namespace      string `json:"namespace"`
+	Status         string `json:"status"`
+	ManagerDesired int    `json:"manager_desired"`
+	ManagerReady   int    `json:"manager_ready"`
+	UIDesired      int    `json:"ui_desired"`
+	UIReady        int    `json:"ui_ready"`
+	StorageClass   string `json:"storage_class"`
+	TotalVolumes   int    `json:"total_volumes"`
 }
 
 type ClusterSummary struct {

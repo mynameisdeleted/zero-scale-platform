@@ -198,6 +198,38 @@
   .node-meta { font-size: 12px; color: var(--text-muted); display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 16px 0; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; }
   .node-metric { margin-top: 10px; }
   .metric-label-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
+  /* Operators Grid */
+  .operators-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .operator-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .operator-card:hover { transform: translateY(-2px); border-color: rgba(56, 189, 248, 0.4); }
+  .operator-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .operator-title { font-size: 16px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 8px; }
+  .operator-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+  .operator-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 12px 0 0 0;
+    background: rgba(0,0,0,0.2);
+    padding: 12px;
+    border-radius: 8px;
+  }
+  .operator-stat-box { display: flex; flex-direction: column; gap: 3px; }
+  .operator-stat-label { font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .operator-stat-val { font-size: 13.5px; font-weight: 600; color: #fff; word-break: break-all; }
 
   /* Zero-Scale Grid */
   .zero-grid {
@@ -414,6 +446,18 @@
     </div>
   </div>
 
+  <!-- Platform Operators Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>⚙️ Core Platform Operators</span>
+      <span class="badge-count" id="count-operators">2 Active</span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted);">High-Availability Data &amp; Distributed Storage Controllers</div>
+  </div>
+  <div class="operators-grid" id="operators-container">
+    <div style="color:var(--text-muted); font-size:13px;">Querying platform operators...</div>
+  </div>
+
   <!-- Nodes Section -->
   <div class="section-header">
     <div class="section-title">
@@ -613,6 +657,82 @@ function renderDashboard(data) {
   document.getElementById('val-zero').innerText = `${sum.total_zero_apps}`;
   document.getElementById('count-zero').innerText = sum.total_zero_apps;
   document.getElementById('sub-zero-active').innerText = `${sum.active_zero_apps} Active Now`;
+
+  // Render Platform Operators
+  const opsCont = document.getElementById('operators-container');
+  if (opsCont && data.operators) {
+    opsCont.innerHTML = '';
+    const pg = data.operators.postgres;
+    const lh = data.operators.longhorn;
+
+    if (pg) {
+      const pgCard = document.createElement('div');
+      pgCard.className = 'operator-card';
+      const pgReadyCls = pg.operator_ready > 0 ? 'ready' : 'notready';
+      pgCard.innerHTML = `
+        <div class="operator-top">
+          <div>
+            <div class="operator-title"><span>🐘</span> CloudNativePG Operator</div>
+            <div class="operator-sub">Enterprise PostgreSQL HA Controller &bull; ns: ${pg.namespace || 'cnpg-system'}</div>
+          </div>
+          <span class="status-badge ${pgReadyCls}">${pg.status || 'Active'}</span>
+        </div>
+        <div class="operator-meta">
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Operator Controller</span>
+            <span class="operator-stat-val" style="color: var(--green);">${pg.operator_ready} / ${pg.operator_replicas} Replicas Ready</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">HA Database Cluster</span>
+            <span class="operator-stat-val">${pg.ready_instances} / ${pg.instances} Instances Ready</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Primary Instance</span>
+            <span class="operator-stat-val" style="color: var(--blue);">🟢 ${pg.primary || 'ha-postgres-1'}</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Cluster Target</span>
+            <span class="operator-stat-val">${pg.cluster_name || 'ha-postgres'}</span>
+          </div>
+        </div>
+      `;
+      opsCont.appendChild(pgCard);
+    }
+
+    if (lh) {
+      const lhCard = document.createElement('div');
+      lhCard.className = 'operator-card';
+      const lhReadyCls = lh.manager_ready > 0 && lh.manager_ready === lh.manager_desired ? 'ready' : 'notready';
+      lhCard.innerHTML = `
+        <div class="operator-top">
+          <div>
+            <div class="operator-title"><span>🐮</span> Longhorn Storage Operator</div>
+            <div class="operator-sub">Cloud-Native Distributed Block Storage &bull; ns: ${lh.namespace || 'longhorn-system'}</div>
+          </div>
+          <span class="status-badge ${lhReadyCls}">${lh.status || 'Healthy'}</span>
+        </div>
+        <div class="operator-meta">
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Storage Manager (DS)</span>
+            <span class="operator-stat-val" style="color: var(--green);">${lh.manager_ready} / ${lh.manager_desired} Nodes Ready</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Management UI</span>
+            <span class="operator-stat-val" style="color: var(--green);">${lh.ui_ready} / ${lh.ui_desired} Replicas Ready</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Distributed Volumes</span>
+            <span class="operator-stat-val" style="color: var(--blue);">${lh.total_volumes} Active PVs</span>
+          </div>
+          <div class="operator-stat-box">
+            <span class="operator-stat-label">Storage Class</span>
+            <span class="operator-stat-val">${lh.storage_class || 'longhorn-2-replicas'}</span>
+          </div>
+        </div>
+      `;
+      opsCont.appendChild(lhCard);
+    }
+  }
 
   // Render Nodes
   const nodesCont = document.getElementById('nodes-container');
