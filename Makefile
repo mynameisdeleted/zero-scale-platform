@@ -95,7 +95,24 @@ image: build
 
 push: image
 	@echo "==> Pushing Docker image $(IMAGE)..."
-	docker push $(IMAGE)
+	@PF_PID=""; \
+	if ! curl -s --connect-timeout 1 http://localhost:32000/v2/ >/dev/null 2>&1; then \
+		echo "--> Setting up temporary port-forward to container-registry on port 32000..."; \
+		kubectl port-forward -n container-registry svc/registry 32000:5000 >/dev/null 2>&1 & \
+		PF_PID=$$!; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if curl -s --connect-timeout 1 http://localhost:32000/v2/ >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 0.5; \
+		done; \
+	fi; \
+	docker push $(IMAGE); \
+	PUSH_STATUS=$$?; \
+	if [ -n "$$PF_PID" ]; then \
+		kill "$$PF_PID" 2>/dev/null || true; \
+	fi; \
+	exit $$PUSH_STATUS
 
 restart:
 	@echo "==> Restarting deployment $(GATEWAY_APP)..."

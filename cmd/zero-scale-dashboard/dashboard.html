@@ -15,8 +15,7 @@
 <meta property="og:url" content="https://kstat.fairfaxmedia.net/">
 <meta property="og:site_name" content="Zero-Scale Platform">
 
-<link rel="icon" href="https://git.fairfaxmedia.net/assets/img/logo.svg" type="image/svg+xml">
-<link rel="alternate icon" href="https://git.fairfaxmedia.net/assets/img/favicon.png" type="image/png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
 <style>
   :root {
     --bg: #090d16;
@@ -265,12 +264,23 @@
 </head>
 <body>
 <div class="container">
+  <noscript>
+    <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; font-size: 13px; color: var(--text-muted);">
+      This dashboard monitors real-time compute telemetry, node utilization, and autonomous zero-scale service lifecycles across the Kubernetes cluster infrastructure. Active services and source repositories are available at <a href="https://git.fairfaxmedia.net/" style="color:var(--blue); text-decoration:none;">git.fairfaxmedia.net</a>.
+    </div>
+  </noscript>
   <header>
     <div class="brand">
       <div class="brand-icon">⚡</div>
       <div>
         <h1>Zero-Scale Platform Dashboard</h1>
-        <p>Serverless Compute Runtime & Kubernetes Infrastructure Status</p>
+        <p>Serverless Compute Runtime &amp; Kubernetes Infrastructure Status</p>
+        <div style="font-size: 12.5px; margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="color: var(--text-muted);">Core Components:</span>
+          <a href="https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform" target="_blank" style="color: var(--blue); text-decoration: underline;">⚡ zero-scale-platform</a>
+          <span style="color: var(--text-muted);">&bull;</span>
+          <a href="https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese" target="_blank" style="color: var(--blue); text-decoration: underline;">🧀 open-cream-cheese</a>
+        </div>
       </div>
     </div>
     <div class="header-actions">
@@ -278,8 +288,11 @@
         <span class="pulse-dot"></span>
         <span id="update-status">Live Monitoring</span>
       </div>
-      <a href="https://git.fairfaxmedia.net/" target="_blank" class="btn btn-git">
-        <span>📂</span> <strong>git.fairfaxmedia.net</strong>
+      <a href="https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform" target="_blank" class="btn btn-git" title="Zero-Scale Platform Repository">
+        <span>⚡</span> <strong>zero-scale-platform</strong>
+      </a>
+      <a href="https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese" target="_blank" class="btn" title="Open-Cream-Cheese Repository">
+        <span>🧀</span> <strong>open-cream-cheese</strong>
       </a>
       <a href="https://kube.fairfaxmedia.net/" target="_blank" class="btn">
         <span>☸️</span> Kube Dashboard
@@ -322,7 +335,7 @@
     </div>
   </div>
   <div class="nodes-grid" id="nodes-container">
-    <div style="color:var(--text-muted); font-size:13px;">Loading node data...</div>
+    <div style="color:var(--text-muted); font-size:13px;">Connecting to cluster node metrics...</div>
   </div>
 
   <!-- Zero-Scale Deployments Section -->
@@ -334,12 +347,12 @@
     <div style="font-size:12px; color:var(--text-muted);">Consolidated systemd runner compute runtime</div>
   </div>
   <div class="zero-grid" id="zero-container">
-    <div style="color:var(--text-muted); font-size:13px;">Loading zero-scale apps...</div>
+    <div style="color:var(--text-muted); font-size:13px;">Querying zero-scale runner runtime...</div>
   </div>
 
   <!-- Ingresses and Other Sites -->
   <div id="sites-container">
-    <div style="color:var(--text-muted); font-size:13px;">Loading cluster sites...</div>
+    <div style="color:var(--text-muted); font-size:13px;">Discovering cluster ingress services...</div>
   </div>
 
   <footer>
