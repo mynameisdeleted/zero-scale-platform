@@ -751,22 +751,7 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 }
 
 func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
-	var ingList struct {
-		Items []struct {
-			Metadata struct {
-				Name      string `json:"name"`
-				Namespace string `json:"namespace"`
-			} `json:"metadata"`
-			Spec struct {
-				Rules []struct {
-					Host string `json:"host"`
-				} `json:"rules"`
-			} `json:"spec"`
-		} `json:"items"`
-	}
-
-	_ = json.Unmarshal(raw, &ingList)
-
+	_ = raw
 	categories := map[string][]SiteLink{
 		"Core & Infrastructure": {
 			{
@@ -797,84 +782,9 @@ func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 				Description: "Cluster metrics server, alerts, targets, and time-series graphing",
 			},
 		},
-		"Applications & Services": {},
-		"Storage & Data":          {},
-		"Media & Social":          {},
 	}
 
-	seenHosts := make(map[string]bool)
-	seenHosts["git.fairfaxmedia.net"] = true
-	seenHosts["kube.fairfaxmedia.net"] = true
-	seenHosts["prom-serv.kube.fairfaxmedia.net"] = true
-	seenHosts["bdash2.kube.fairfaxmedia.net"] = true
-	seenHosts["bdash2.fairfaxmedia.net"] = true
-	seenHosts["hopscotch.kube.fairfaxmedia.net"] = true
-	seenHosts["status.kube.fairfaxmedia.net"] = true
-	seenHosts["status.fairfaxmedia.net"] = true
-	seenHosts["kstat.fairfaxmedia.net"] = true
-	seenHosts["kstat.kube.fairfaxmedia.net"] = true
-
-	for _, item := range ingList.Items {
-		ns := item.Metadata.Namespace
-		for _, r := range item.Spec.Rules {
-			host := r.Host
-			if seenHosts[host] || host == "" {
-				continue
-			}
-			seenHosts[host] = true
-
-			link := SiteLink{
-				Name:      formatSiteName(host, item.Metadata.Name),
-				Host:      host,
-				URL:       "https://" + host + "/",
-				Namespace: ns,
-			}
-
-			if strings.Contains(host, "minio") {
-				link.Category = "Storage & Data"
-				link.Icon = "🪣"
-				link.Description = "High-Performance S3 Compatible Distributed Object Store"
-				categories["Storage & Data"] = append(categories["Storage & Data"], link)
-			} else if strings.Contains(host, "sync") {
-				link.Category = "Storage & Data"
-				link.Icon = "🔄"
-				link.Description = "Continuous multi-device decentralized file synchronization"
-				categories["Storage & Data"] = append(categories["Storage & Data"], link)
-			} else if strings.Contains(host, "nextcloud") {
-				link.Category = "Applications & Services"
-				link.Icon = "☁️"
-				link.Description = "Private cloud productivity, files, calendars, and team collaboration"
-				categories["Applications & Services"] = append(categories["Applications & Services"], link)
-			} else if strings.Contains(host, "odoo") {
-				link.Category = "Applications & Services"
-				link.Icon = "💼"
-				link.Description = "Enterprise resource planning, CRM, accounting, and inventory"
-				categories["Applications & Services"] = append(categories["Applications & Services"], link)
-			} else if strings.Contains(host, "papi") {
-				link.Category = "Applications & Services"
-				link.Icon = "🔌"
-				link.Description = "Production platform API services and integration gateway"
-				categories["Applications & Services"] = append(categories["Applications & Services"], link)
-			} else if strings.Contains(host, "social") {
-				link.Category = "Media & Social"
-				link.Icon = "🐘"
-				link.Description = "Decentralized federated social network server"
-				categories["Media & Social"] = append(categories["Media & Social"], link)
-			} else if strings.Contains(host, "search") {
-				link.Category = "Applications & Services"
-				link.Icon = "🔍"
-				link.Description = "Decentralized web search engine and distributed web indexer"
-				categories["Applications & Services"] = append(categories["Applications & Services"], link)
-			} else {
-				link.Category = "Applications & Services"
-				link.Icon = "🌐"
-				link.Description = "Kubernetes Ingress deployed service"
-				categories["Applications & Services"] = append(categories["Applications & Services"], link)
-			}
-		}
-	}
-
-	order := []string{"Core & Infrastructure", "Applications & Services", "Storage & Data", "Media & Social"}
+	order := []string{"Core & Infrastructure"}
 	var result []SiteGroup
 	for _, cat := range order {
 		if len(categories[cat]) > 0 {
@@ -882,34 +792,6 @@ func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 		}
 	}
 	return result
-}
-
-func formatSiteName(host, ingName string) string {
-	parts := strings.Split(host, ".")
-	if len(parts) > 0 {
-		first := parts[0]
-		switch first {
-		case "minio-console":
-			return "MinIO Object Storage Console"
-		case "minio":
-			return "MinIO S3 API"
-		case "nextcloud":
-			return "Nextcloud Cloud Hub"
-		case "odoo":
-			return "Odoo ERP"
-		case "social":
-			return "Mastodon Social"
-		case "search":
-			return "YaCy Search Lab"
-		case "sync":
-			return "Syncthing File Sync"
-		case "papi":
-			return "PAPI Production API"
-		default:
-			return strings.Title(strings.ReplaceAll(first, "-", " "))
-		}
-	}
-	return ingName
 }
 
 func formatDuration(d time.Duration) string {

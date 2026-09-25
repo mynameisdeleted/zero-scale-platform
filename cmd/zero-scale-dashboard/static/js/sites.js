@@ -5,10 +5,18 @@ function renderOtherSites(otherSites) {
   const ph = document.getElementById('placeholder-sites');
   if (ph) ph.remove();
 
+  // Exclude sections from web display: Applications & Services, Storage & Data, Media & Social
+  const excludedCategories = new Set([
+    'Applications & Services',
+    'Storage & Data',
+    'Media & Social'
+  ]);
+  const visibleGroups = otherSites.filter(group => !excludedCategories.has(group.category));
+
   // Only render once if not yet built; avoid rebuilding static Ingress links every 10s
   if (sitesCont.children.length > 0) return;
 
-  otherSites.forEach(group => {
+  visibleGroups.forEach(group => {
     const section = document.createElement('div');
     section.innerHTML = `
       <div class="section-header">
