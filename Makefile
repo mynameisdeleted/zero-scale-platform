@@ -3,7 +3,7 @@ NAMESPACE ?= default
 GATEWAY_APP ?= zero-scale-gateway
 APPS_DIR ?= /opt/apps
 
-.PHONY: all build build-gateway build-dashboard build-mock \
+.PHONY: all build build-gateway build-dashboard build-static build-mock \
         deploy deploy-manifests deploy-dashboard build-and-deploy \
         image push restart full-deploy ship verify status clean
 
@@ -23,9 +23,13 @@ build-mock:
 	@echo "==> Building mock-app..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o mock-app ./cmd/mock-app
 
-build-dashboard:
+build-static:
+	@echo "==> Building minified dashboard static assets..."
+	go run ./cmd/zero-scale-dashboard/build
+
+build-dashboard: build-static
 	@echo "==> Building zero-scale-dashboard..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o zero-scale-dashboard ./cmd/zero-scale-dashboard
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o zero-scale-dashboard ./cmd/zero-scale-dashboard/go
 
 # -------------------------------------------------------------
 # Kubernetes Manifests

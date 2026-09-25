@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zero-Scale Platform Dashboard</title>
+<meta name="description" content="Real-time operational telemetry and infrastructure monitoring for the Zero-Scale Platform on Kubernetes.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://kstat.fairfaxmedia.net/">
+
+<!-- Open Graph Metadata -->
+<meta property="og:title" content="Zero-Scale Platform Dashboard">
+<meta property="og:description" content="Real-time operational telemetry and infrastructure monitoring for the Zero-Scale Platform on Kubernetes.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://kstat.fairfaxmedia.net/">
+<meta property="og:site_name" content="Zero-Scale Platform">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+<link rel="stylesheet" href="/style.min.css">
+<script src="/bundle.min.js" defer></script>
+</head>
+<body>
+<div class="container">
+  <noscript>
+    <div style="background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; font-size: 13px; color: var(--text-muted);">
+      This dashboard monitors real-time compute telemetry, node utilization, and autonomous zero-scale service lifecycles across the Kubernetes cluster infrastructure. Active services and source repositories are available at <a href="https://git.fairfaxmedia.net/" style="color:var(--blue); text-decoration:none;">git.fairfaxmedia.net</a>.
+    </div>
+  </noscript>
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <h1>Zero-Scale Platform Dashboard</h1>
+        <p>Serverless Compute Runtime &amp; Kubernetes Infrastructure Status</p>
+        <div style="font-size: 12.5px; margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="color: var(--text-muted);">Core Components:</span>
+          <a href="https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform" target="_blank" style="color: var(--blue); text-decoration: underline;">⚡ zero-scale-platform</a>
+          <span style="color: var(--text-muted);">&bull;</span>
+          <a href="https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese" target="_blank" style="color: var(--blue); text-decoration: underline;">🧀 open-cream-cheese</a>
+        </div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="live-indicator">
+        <span class="pulse-dot"></span>
+        <span id="update-status">Live Monitoring</span>
+      </div>
+      <a href="https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform" target="_blank" class="btn btn-git" title="Zero-Scale Platform Repository">
+        <span>⚡</span> <strong>zero-scale-platform</strong>
+      </a>
+      <a href="https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese" target="_blank" class="btn" title="Open-Cream-Cheese Repository">
+        <span>🧀</span> <strong>open-cream-cheese</strong>
+      </a>
+      <a href="https://kube.fairfaxmedia.net/" target="_blank" class="btn">
+        <span>☸️</span> Kube Dashboard
+      </a>
+      <button id="btn-auth" class="btn" onclick="toggleAuthModal()" style="border-color: var(--border);">
+        <span id="auth-icon">🔐</span> <span id="auth-label">RBAC Access</span>
+      </button>
+      <button class="btn btn-primary" onclick="loadStatus()">🔄 Refresh</button>
+    </div>
+  </header>
+
+  <!-- Cluster Overview Cards -->
+  <div class="metrics-grid">
+    <div class="metric-card" style="--accent: var(--green);">
+      <div class="metric-title">Cluster Nodes</div>
+      <div class="metric-value" id="val-nodes">-- / --</div>
+      <div class="metric-sub"><span>Nodes Status</span><span id="sub-nodes" style="color:var(--green)">Online</span></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--blue);">
+      <div class="metric-title">CPU Utilization</div>
+      <div class="metric-value" id="val-cpu">-- %</div>
+      <div class="metric-sub"><span id="sub-cpu-detail">-- / -- Cores</span><span id="sub-cpu-pct">-- %</span></div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-cpu" style="width: 0%; --fill-color: var(--blue);"></div></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--purple);">
+      <div class="metric-title">RAM Utilization</div>
+      <div class="metric-value" id="val-ram">-- %</div>
+      <div class="metric-sub"><span id="sub-ram-detail">-- / -- GB</span><span id="sub-ram-pct">-- %</span></div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-ram" style="width: 0%; --fill-color: var(--purple);"></div></div>
+    </div>
+    <div class="metric-card" style="--accent: var(--amber);">
+      <div class="metric-title">Zero-Scale Apps</div>
+      <div class="metric-value" id="val-zero">--</div>
+      <div class="metric-sub"><span id="sub-zero-active">-- Active</span><span>On-Demand Scaled</span></div>
+    </div>
+  </div>
+
+  <!-- Architecture Efficiency Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>🚀 Architecture &amp; Zero-Scale Memory Savings</span>
+      <span class="badge-count" id="badge-efficiency-saved" style="background: rgba(34, 197, 94, 0.15); color: var(--green); border-color: rgba(34, 197, 94, 0.3);">~90% Memory Saved</span>
+      <span class="badge-count" id="badge-zero-footprint" style="background: rgba(56, 189, 248, 0.15); color: var(--blue); border-color: rgba(56, 189, 248, 0.3);">⚡ Total Zero-Scale: -- MB across all nodes</span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted);">Real-time memory savings vs. traditional 24/7 container &amp; database overhead</div>
+  </div>
+  <div class="efficiency-grid">
+    <!-- Card 1: Serverless Zero-Scale Savings -->
+    <div class="efficiency-card" style="--accent: var(--green);">
+      <div class="efficiency-title">⚡ Zero-Scale Serverless Savings</div>
+      <div class="efficiency-val" id="eff-zero-saved" style="color: var(--green);">-- MB</div>
+      <div class="efficiency-desc" id="eff-zero-desc">Reclaimed by scaling idle microservices to 0 MB</div>
+      <div class="efficiency-sub" id="eff-zero-footprint-sub" style="color: #38bdf8; font-weight: 500;">
+        ⚡ Total Cluster Footprint: <span id="eff-zero-footprint-val">-- MB</span> across all nodes
+      </div>
+      <div class="efficiency-bar-row">
+        <span style="font-size: 11px; color: var(--text-muted);">Zero-Scale Inactive</span>
+        <span id="eff-zero-pct" style="font-size: 11px; font-weight: 600; color: var(--green);">--% Saved</span>
+      </div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-zero-saved" style="width: 0%; --fill-color: var(--green);"></div></div>
+    </div>
+
+    <!-- Card 2: Shared CloudNativePG Savings -->
+    <div class="efficiency-card" style="--accent: var(--blue);">
+      <div class="efficiency-title">🐘 CloudNativePG Pooling (Savings)</div>
+      <div class="efficiency-val" id="eff-db-saved" style="color: var(--blue);">~620 MB Saved</div>
+      <div class="efficiency-desc" id="eff-db-desc">Saves memory by pooling databases into 1 shared HA cluster vs 3+ separate 24/7 DB pods</div>
+      <div class="efficiency-sub" id="eff-db-actual-sub">Actual Consumption: <strong id="eff-db-actual-val" style="color: #e2e8f0;">~280 MB</strong> (ha-postgres 2/2)</div>
+      <div class="efficiency-bar-row">
+        <span style="font-size: 11px; color: var(--text-muted);">Net DB RAM Saved</span>
+        <span id="eff-db-pct" style="font-size: 11px; font-weight: 600; color: var(--blue);">~69% Saved</span>
+      </div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-db-saved" style="width: 69%; --fill-color: var(--blue);"></div></div>
+    </div>
+
+    <!-- Card 3: Unified Longhorn Storage Mesh -->
+    <div class="efficiency-card" style="--accent: var(--purple);">
+      <div class="efficiency-title">🐮 Unified Longhorn Storage</div>
+      <div class="efficiency-val" id="eff-storage-vols" style="color: var(--purple);">12 Volumes</div>
+      <div class="efficiency-desc">Zero per-app storage daemon or controller overhead</div>
+      <div class="efficiency-bar-row">
+        <span style="font-size: 11px; color: var(--text-muted);">Distributed Storage Mesh</span>
+        <span style="font-size: 11px; font-weight: 600; color: var(--purple);">longhorn-2-replicas</span>
+      </div>
+      <div class="progress-bg"><div class="progress-fill" style="width: 85%; --fill-color: var(--purple);"></div></div>
+    </div>
+
+    <!-- Card 4: Total Memory Footprint Reduction -->
+    <div class="efficiency-card" style="--accent: var(--amber);">
+      <div class="efficiency-title">📉 Net Cluster Memory Saved</div>
+      <div class="efficiency-val" id="eff-total-saved" style="color: #fbbf24;">-- GB</div>
+      <div class="efficiency-sub" id="eff-total-breakdown">Actual: -- MB &bull; Trad: -- MB</div>
+      <div class="efficiency-bar-row">
+        <span style="font-size: 11px; color: var(--text-muted);">Total Footprint Reduction</span>
+        <span id="eff-total-pct" style="font-size: 11px; font-weight: 600; color: #fbbf24;">--%</span>
+      </div>
+      <div class="progress-bg"><div class="progress-fill" id="fill-total-saved" style="width: 0%; --fill-color: #fbbf24;"></div></div>
+    </div>
+  </div>
+
+  <!-- Platform Operators Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>⚙️ Core Platform Operators</span>
+      <span class="badge-count" id="count-operators">2 Active</span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted);">High-Availability Data &amp; Distributed Storage Controllers</div>
+  </div>
+  <div class="operators-grid" id="operators-container">
+    <div class="loading-placeholder" id="placeholder-operators">Querying platform operators...</div>
+  </div>
+
+  <!-- Nodes Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>🖥️ Cluster Nodes</span>
+      <span class="badge-count" id="count-nodes">0</span>
+    </div>
+  </div>
+  <div class="nodes-grid" id="nodes-container">
+    <div class="loading-placeholder" id="placeholder-nodes">Connecting to cluster node metrics...</div>
+  </div>
+
+  <!-- Zero-Scale Deployments Section -->
+  <div class="section-header">
+    <div class="section-title">
+      <span>⚡ Zero-Scale Deployed Services</span>
+      <span class="badge-count" id="count-zero">0</span>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted);">Consolidated systemd runner compute runtime &bull; 10s idle scale-down</div>
+  </div>
+  <div class="zero-scale-notice">
+    <span style="font-size: 20px; line-height: 1.2;">⚡</span>
+    <div>
+      <strong>On-Demand Serverless Compute:</strong> Services remain <em>"Scaled to Zero"</em> when inactive to conserve cluster resources. Opening a service instantly boots it in under 200ms. If you click <strong>Open App</strong> on an idle service and switch tabs back to this dashboard within <strong>10 seconds</strong>, the badge will show <strong style="color: var(--green);">🟢 Active</strong> before scaling down automatically after 10 seconds of idle!
+    </div>
+  </div>
+  <div class="zero-grid" id="zero-container">
+    <div class="loading-placeholder" id="placeholder-zero">Querying zero-scale runner runtime...</div>
+  </div>
+
+  <!-- Ingresses and Other Sites -->
+  <div id="sites-container">
+    <div class="loading-placeholder" id="placeholder-sites">Discovering cluster ingress services...</div>
+  </div>
+
+  <!-- RBAC Authentication Modal -->
+  <div class="modal-overlay" id="auth-modal" onclick="if(event.target === this) closeAuthModal()">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="margin:0;">🔐 Kubernetes RBAC Access</h3>
+        <button onclick="closeAuthModal()" style="background:none; border:none; color:var(--text-muted); font-size:22px; cursor:pointer; line-height:1;">&times;</button>
+      </div>
+      <p>
+        Enter a Kubernetes ServiceAccount Bearer token to unlock exact Linux kernel versions, cluster patch releases, and system runtime internals.
+      </p>
+      <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:6px;">Generate token on workstation or cluster node:</div>
+      <div class="code-snippet">
+        <code>kubectl create token default</code>
+        <button class="btn" style="padding:2px 8px; font-size:11px;" onclick="navigator.clipboard.writeText('kubectl create token default'); alert('Copied to clipboard!')">Copy</button>
+      </div>
+      <textarea class="modal-textarea" id="token-input" placeholder="Paste Bearer Token (ey...)"></textarea>
+      <div class="modal-msg" id="auth-msg"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="clearToken()" id="btn-clear-token" style="display:none; color:var(--red); border-color: rgba(239,68,68,0.3);">Clear / Logout</button>
+        <button class="btn" onclick="closeAuthModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitToken()">Unlock Telemetry</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Zero-Scale Platform Dashboard &bull; Fairfax Media Infrastructure &bull; <a href="https://git.fairfaxmedia.net/" style="color:var(--blue); text-decoration:none;">git.fairfaxmedia.net</a>
+  </footer>
+</div>
+</body>
+</html>
