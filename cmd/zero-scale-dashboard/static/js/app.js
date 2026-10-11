@@ -63,12 +63,12 @@ function renderDashboard(data) {
 
   // Summary Cards
   if (typeof renderSummaryMetrics === 'function') {
-    renderSummaryMetrics(data.summary);
+    renderSummaryMetrics(data.summary, data.stack_total);
   }
 
   // Architecture Efficiency Metrics
   if (typeof renderEfficiency === 'function') {
-    renderEfficiency(data.efficiency);
+    renderEfficiency(data.efficiency, data.stack_total);
   }
 
   // Smooth in-place updates for child sections
@@ -76,7 +76,7 @@ function renderDashboard(data) {
     renderOperators(data.operators, data.efficiency);
   }
   if (typeof renderNodes === 'function') {
-    renderNodes(data.nodes, isAuthed);
+    renderNodes(data.nodes, isAuthed, data.zero_scale_apps);
   }
   if (typeof renderZeroScale === 'function') {
     renderZeroScale(data.zero_scale_apps, isAuthed, token);

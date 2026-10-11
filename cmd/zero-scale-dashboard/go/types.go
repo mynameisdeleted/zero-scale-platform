@@ -8,6 +8,7 @@ type ClusterStatus struct {
 	Authenticated  bool                   `json:"authenticated"`
 	Summary        ClusterSummary         `json:"summary"`
 	Efficiency     ArchitectureEfficiency `json:"efficiency"`
+	StackTotal     ZeroScaleStackTotal    `json:"stack_total"`
 	Operators      PlatformOperators      `json:"operators"`
 	Nodes          []NodeStatus           `json:"nodes"`
 	ZeroScaleApps  []ZeroScaleApp         `json:"zero_scale_apps"`
@@ -33,33 +34,56 @@ type ArchitectureEfficiency struct {
 	StorageBenefit               string  `json:"storage_benefit"`
 }
 
+type ZeroScaleStackTotal struct {
+	ZeroScaleRAMBytes int64   `json:"zero_scale_ram_bytes"`
+	ZeroScaleCPUCores float64 `json:"zero_scale_cpu_cores"`
+	PostgresRAMBytes  int64   `json:"postgres_ram_bytes"`
+	PostgresCPUCores  float64 `json:"postgres_cpu_cores"`
+	LonghornRAMBytes  int64   `json:"longhorn_ram_bytes"`
+	LonghornCPUCores  float64 `json:"longhorn_cpu_cores"`
+	TotalRAMBytes     int64   `json:"total_ram_bytes"`
+	TotalCPUCores     float64 `json:"total_cpu_cores"`
+	ClusterRAMPercent float64 `json:"cluster_ram_percent"`
+	ClusterCPUPercent float64 `json:"cluster_cpu_percent"`
+}
+
 type PlatformOperators struct {
 	Postgres PostgresOperatorInfo `json:"postgres"`
 	Longhorn LonghornOperatorInfo `json:"longhorn"`
 }
 
 type PostgresOperatorInfo struct {
-	Name             string `json:"name"`
-	Namespace        string `json:"namespace"`
-	Status           string `json:"status"`
-	OperatorReplicas int    `json:"operator_replicas"`
-	OperatorReady    int    `json:"operator_ready"`
-	ClusterName      string `json:"cluster_name"`
-	Instances        int    `json:"instances"`
-	ReadyInstances   int    `json:"ready_instances"`
-	Primary          string `json:"primary"`
+	Name             string  `json:"name"`
+	Namespace        string  `json:"namespace"`
+	Status           string  `json:"status"`
+	OperatorReplicas int     `json:"operator_replicas"`
+	OperatorReady    int     `json:"operator_ready"`
+	OperatorRAMBytes int64   `json:"operator_ram_bytes"`
+	OperatorCPUCores float64 `json:"operator_cpu_cores"`
+	ClusterName      string  `json:"cluster_name"`
+	Instances        int     `json:"instances"`
+	ReadyInstances   int     `json:"ready_instances"`
+	Primary          string  `json:"primary"`
+	DatabaseRAMBytes int64   `json:"database_ram_bytes"`
+	DatabaseCPUCores float64 `json:"database_cpu_cores"`
+	TotalRAMBytes    int64   `json:"total_ram_bytes"`
+	TotalCPUCores    float64 `json:"total_cpu_cores"`
 }
 
 type LonghornOperatorInfo struct {
-	Name           string `json:"name"`
-	Namespace      string `json:"namespace"`
-	Status         string `json:"status"`
-	ManagerDesired int    `json:"manager_desired"`
-	ManagerReady   int    `json:"manager_ready"`
-	UIDesired      int    `json:"ui_desired"`
-	UIReady        int    `json:"ui_ready"`
-	StorageClass   string `json:"storage_class"`
-	TotalVolumes   int    `json:"total_volumes"`
+	Name            string  `json:"name"`
+	Namespace       string  `json:"namespace"`
+	Status          string  `json:"status"`
+	ManagerDesired  int     `json:"manager_desired"`
+	ManagerReady    int     `json:"manager_ready"`
+	UIDesired       int     `json:"ui_desired"`
+	UIReady         int     `json:"ui_ready"`
+	StorageClass    string  `json:"storage_class"`
+	TotalVolumes    int     `json:"total_volumes"`
+	ManagerRAMBytes int64   `json:"manager_ram_bytes"`
+	ManagerCPUCores float64 `json:"manager_cpu_cores"`
+	TotalRAMBytes   int64   `json:"total_ram_bytes"`
+	TotalCPUCores   float64 `json:"total_cpu_cores"`
 }
 
 type ClusterSummary struct {
@@ -95,8 +119,13 @@ type NodeStatus struct {
 	RAMUsagePercent       float64           `json:"ram_usage_percent"`
 	ZeroScaleRAMBytes     int64             `json:"zero_scale_ram_bytes"`
 	ZeroScaleRAMPercent   float64           `json:"zero_scale_ram_percent"`
+	SupportingRAMBytes    int64             `json:"supporting_ram_bytes"`
+	LegacyRAMBytes        int64             `json:"legacy_ram_bytes"`
 	OtherWorkloadRAMBytes int64             `json:"other_workload_ram_bytes"`
 	TopMemoryConsumers    []MemoryHog       `json:"top_memory_consumers"`
+	ZeroScaleSupporting   []MemoryHog       `json:"zero_scale_supporting,omitempty"`
+	LegacyMonoliths       []MemoryHog       `json:"legacy_monoliths,omitempty"`
+	ZeroScaleServices     []ZeroScaleApp    `json:"zero_scale_services,omitempty"`
 	EphemeralBytes        int64             `json:"ephemeral_bytes"`
 	Conditions            map[string]string `json:"conditions"`
 }
@@ -106,16 +135,19 @@ type MemoryHog struct {
 	Namespace string `json:"namespace"`
 	RAMBytes  int64  `json:"ram_bytes"`
 	Display   string `json:"display"`
+	Category  string `json:"category,omitempty"` // "supporting" or "legacy"
 }
 
 type ZeroScaleApp struct {
-	Host        string `json:"host"`
-	URL         string `json:"url"`
-	Type        string `json:"type"`  // elf, wasm
-	State       string `json:"state"` // active, idle
-	Port        int    `json:"port,omitempty"`
-	LogsURL     string `json:"logs_url"`
-	Description string `json:"description,omitempty"`
+	Host        string  `json:"host"`
+	URL         string  `json:"url"`
+	Type        string  `json:"type"`  // elf, wasm
+	State       string  `json:"state"` // active, idle
+	Port        int     `json:"port,omitempty"`
+	LogsURL     string  `json:"logs_url"`
+	Description string  `json:"description,omitempty"`
+	RAMBytes    int64   `json:"ram_bytes"`
+	CPUCores    float64 `json:"cpu_cores"`
 }
 
 type SiteLink struct {

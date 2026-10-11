@@ -23,6 +23,287 @@
 .metric-value { font-size: 28px; font-weight: 700; margin: 6px 0; color: #fff; }
 .metric-sub { font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center; }
 
+/* Zero-Scale Stack Total Hero Banner */
+.stack-hero-container {
+  margin-bottom: 28px;
+}
+.stack-hero-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px 28px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+}
+.stack-hero-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--green), #38bdf8 50%, var(--purple));
+}
+.stack-hero-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.stack-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.stack-hero-icon {
+  font-size: 30px;
+  line-height: 1;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 10px;
+  border-radius: 12px;
+}
+.stack-hero-title h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 4px 0;
+  letter-spacing: -0.01em;
+}
+.stack-hero-title p {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 580px;
+  line-height: 1.4;
+}
+.stack-hero-total-badge {
+  text-align: right;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 18px;
+  border-radius: 10px;
+}
+.stack-hero-val {
+  font-size: 32px;
+  font-weight: 800;
+  color: #38bdf8;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stack-hero-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.stack-bar-wrapper {
+  margin: 18px 0;
+}
+.stack-segmented-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.stack-breakout-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+@media (max-width: 768px) {
+  .stack-breakout-grid {
+    grid-template-columns: 1fr;
+  }
+  .stack-hero-total-badge {
+    text-align: left;
+    width: 100%;
+  }
+}
+.stack-col-card {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  transition: all 0.15s ease;
+}
+.stack-col-card:hover {
+  background: rgba(0, 0, 0, 0.32);
+  transform: translateY(-1px);
+}
+.stack-col-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.stack-col-icon {
+  font-size: 14px;
+}
+.stack-col-name {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.stack-col-value {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 4px 0 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stack-col-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* Core Platform Engines Strip */
+.stack-engines-strip {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+@media (max-width: 900px) {
+  .stack-engines-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .stack-engine-connector {
+    transform: rotate(90deg);
+    margin: 4px auto;
+  }
+}
+.stack-engine-pill {
+  flex: 1;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
+}
+.stack-engine-pill:hover {
+  background: rgba(0, 0, 0, 0.38);
+  transform: translateY(-1px);
+}
+.stack-engine-gitops {
+  border-left: 3px solid #f59e0b;
+}
+.stack-engine-runtime {
+  border-left: 3px solid #38bdf8;
+}
+.stack-engine-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  text-decoration: none;
+  color: inherit;
+}
+.stack-engine-avatar {
+  font-size: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.stack-engine-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.stack-engine-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #fff;
+}
+.stack-engine-tag {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+.stack-engine-tag.cream-tag {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+.stack-engine-tag.zero-tag {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+.stack-engine-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+.stack-engine-connector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.connector-line {
+  width: 20px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.15);
+}
+.connector-arrow {
+  color: #38bdf8;
+  font-size: 9px;
+}
+
+/* Stack Breakout Inside Metric Card */
+.stack-breakout {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+}
+.stack-breakout-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-muted);
+}
+.stack-breakout-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.stack-breakout-val {
+  color: #fff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+
 /* Efficiency Grid */
 .efficiency-grid {
   display: grid;

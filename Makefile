@@ -31,6 +31,10 @@ build-dashboard: build-static
 	@echo "==> Building zero-scale-dashboard..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o zero-scale-dashboard ./cmd/zero-scale-dashboard/go
 
+build-jwks-aggregator:
+	@echo "==> Building temporal-jwks-aggregator..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o temporal-jwks-aggregator ./cmd/temporal-jwks-aggregator
+
 # -------------------------------------------------------------
 # Kubernetes Manifests
 # -------------------------------------------------------------

@@ -47,6 +47,81 @@ header {
 .btn-primary { background: #0284c7; border-color: #38bdf8; color: #fff; }
 .btn-primary:hover { background: #0369a1; }
 
+/* Engine Badges in Header */
+.engine-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 9px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border);
+}
+.engine-badge-icon {
+  font-size: 15px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.engine-badge-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.engine-badge-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.engine-badge-role {
+  font-size: 9.5px;
+  opacity: 0.85;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* Zero-Scale Theme: Electric Cyan */
+.engine-zero {
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #bae6fd;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.12);
+}
+.engine-zero .engine-badge-name {
+  color: #38bdf8;
+}
+.engine-zero .engine-badge-role {
+  color: #7dd3fc;
+}
+.engine-zero:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+  transform: translateY(-1px);
+}
+
+/* Open-Cream-Cheese Theme: Warm Cheddar Gold */
+.engine-cream {
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fde68a;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.12);
+}
+.engine-cream .engine-badge-name {
+  color: #fbbf24;
+}
+.engine-cream .engine-badge-role {
+  color: #fcd34d;
+}
+.engine-cream:hover {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+  transform: translateY(-1px);
+}
+
 /* Status Indicator */
 .live-indicator {
   display: inline-flex;

@@ -1,0 +1,123 @@
+server:
+  replicaCount: 1
+  config:
+    persistence:
+      defaultStore: default
+      visibilityStore: visibility
+      numHistoryShards: 64
+    global:
+      authorization:
+        jwtKeyProvider:
+          keySourceUri: "http://temporal-jwks-aggregator.default.svc.cluster.local:8080/keys"
+          refreshInterval: 1m
+        permissionsClaimName: "permissions"
+        authorizer: "default"
+        claimMapper: "default"
+      datastores:
+        default:
+          sql:
+            createDatabase: false
+            manageSchema: true
+            pluginName: postgres12
+            driverName: postgres12
+            databaseName: temporal
+            connectAddr: "ha-postgres-rw.default.svc.cluster.local:5432"
+            connectProtocol: "tcp"
+            user: temporal
+            existingSecret: temporal-db-secret
+            secretKey: password
+            maxConns: 20
+            maxIdleConns: 20
+            maxConnLifetime: "1h"
+        visibility:
+          sql:
+            createDatabase: false
+            manageSchema: true
+            pluginName: postgres12
+            driverName: postgres12
+            databaseName: temporal_visibility
+            connectAddr: "ha-postgres-rw.default.svc.cluster.local:5432"
+            connectProtocol: "tcp"
+            user: temporal
+            existingSecret: temporal-db-secret
+            secretKey: password
+            maxConns: 20
+            maxIdleConns: 20
+            maxConnLifetime: "1h"
+  frontend:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  history:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  matching:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  worker:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+web:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  additionalEnv:
+    - name: TEMPORAL_AUTH_ENABLED
+      value: "true"
+    - name: TEMPORAL_AUTH_PROVIDER_URL
+      value: "https://git.fairfaxmedia.net"
+    - name: TEMPORAL_AUTH_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: temporal-oauth-secret
+          key: client-id
+    - name: TEMPORAL_AUTH_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: temporal-oauth-secret
+          key: client-secret
+    - name: TEMPORAL_AUTH_CALLBACK_URL
+      value: "https://temporal.ffxm.cc/auth/sso/callback"
+    - name: TEMPORAL_AUTH_SCOPES
+      value: "openid,profile,email"
+  ingress:
+    enabled: true
+    className: public
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+    hosts:
+      - temporal.ffxm.cc
+      - temporal.kube.fairfaxmedia.net
+
+admintools:
+  enabled: true
+
+schema:
+  useHelmHooks: true
+  ttlSecondsAfterFinished: 3600

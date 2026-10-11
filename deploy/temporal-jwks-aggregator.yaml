@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-jwks-aggregator
+  namespace: default
+  labels:
+    app: temporal-jwks-aggregator
+    app.kubernetes.io/name: temporal-jwks-aggregator
+    app.kubernetes.io/part-of: temporal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-jwks-aggregator
+  template:
+    metadata:
+      labels:
+        app: temporal-jwks-aggregator
+    spec:
+      serviceAccountName: default
+      containers:
+      - name: aggregator
+        image: localhost:32000/systemd-runner:latest
+        command: ["/opt/apps/temporal-jwks-aggregator"]
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: GITEA_JWKS_URL
+          value: "https://git.fairfaxmedia.net/login/oauth/keys"
+        - name: K8S_JWKS_URL
+          value: "https://kubernetes.default.svc/openid/v1/jwks"
+        - name: PORT
+          value: "8080"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-jwks-aggregator
+  namespace: default
+  labels:
+    app: temporal-jwks-aggregator
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: temporal-jwks-aggregator

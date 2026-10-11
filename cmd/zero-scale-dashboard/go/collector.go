@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +31,11 @@ type Collector struct {
 	cachedRaw *ClusterStatus
 	cacheTime time.Time
 	cacheTTL  time.Duration
+
+	cpuSamplesMu   sync.Mutex
+	prevAppCPUNSec map[string]int64
+	prevAppCPUTime map[string]time.Time
+	systemSliceDir string
 }
 
 func NewCollector(gatewayURL, appsDir string) *Collector {
@@ -57,13 +64,15 @@ func NewCollector(gatewayURL, appsDir string) *Collector {
 	}
 
 	return &Collector{
-		k8sHost:    k8sHost,
-		k8sPort:    k8sPort,
-		token:      token,
-		client:     client,
-		appsDir:    appsDir,
-		gatewayURL: gatewayURL,
-		cacheTTL:   3 * time.Second,
+		k8sHost:        k8sHost,
+		k8sPort:        k8sPort,
+		token:          token,
+		client:         client,
+		appsDir:        appsDir,
+		gatewayURL:     gatewayURL,
+		cacheTTL:       5 * time.Second,
+		prevAppCPUNSec: make(map[string]int64),
+		prevAppCPUTime: make(map[string]time.Time),
 	}
 }
 
@@ -184,8 +193,11 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 		}
 	}
 
-	// Parse pod metrics map (namespace/podName -> total memory bytes)
-	podMetricsMap := make(map[string]int64)
+	type podResourceUsage struct {
+		memBytes int64
+		cpuNano  int64
+	}
+	podMetricsMap := make(map[string]podResourceUsage)
 	if podMetricsErr == nil && len(rawPodMetrics) > 0 {
 		var podMetricList struct {
 			Items []struct {
@@ -195,6 +207,7 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 				} `json:"metadata"`
 				Containers []struct {
 					Usage struct {
+						CPU    string `json:"cpu"`
 						Memory string `json:"memory"`
 					} `json:"usage"`
 				} `json:"containers"`
@@ -203,11 +216,16 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 		if err := json.Unmarshal(rawPodMetrics, &podMetricList); err == nil {
 			for _, item := range podMetricList.Items {
 				var podMem int64
+				var podCPU int64
 				for _, c := range item.Containers {
 					podMem += parseQuantityBytes(c.Usage.Memory)
+					podCPU += parseQuantityNano(c.Usage.CPU)
 				}
 				key := item.Metadata.Namespace + "/" + item.Metadata.Name
-				podMetricsMap[key] = podMem
+				podMetricsMap[key] = podResourceUsage{
+					memBytes: podMem,
+					cpuNano:  podCPU,
+				}
 			}
 		}
 	}
@@ -239,14 +257,14 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 					continue
 				}
 				key := p.Metadata.Namespace + "/" + p.Metadata.Name
-				mem := podMetricsMap[key]
+				usage := podMetricsMap[key]
 				if isZeroScalePod(p.Metadata.Namespace, p.Metadata.Name) {
-					nodeZeroScaleRAM[node] += mem
+					nodeZeroScaleRAM[node] += usage.memBytes
 				} else {
 					nodePods[node] = append(nodePods[node], podItem{
 						name:      p.Metadata.Name,
 						namespace: p.Metadata.Namespace,
-						memBytes:  mem,
+						memBytes:  usage.memBytes,
 					})
 				}
 			}
@@ -297,6 +315,15 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	var totalUsedRAMBytes int64
 	var readyNodes int
 
+	// Zero-scale apps discovery
+	status.ZeroScaleApps = c.collectZeroScaleApps()
+	status.Summary.TotalZeroApps = len(status.ZeroScaleApps)
+	for _, a := range status.ZeroScaleApps {
+		if a.State == "active" {
+			status.Summary.ActiveZeroApps++
+		}
+	}
+
 	for _, n := range k8sNodeList.Items {
 		nodeStat := NodeStatus{
 			Name:            n.Metadata.Name,
@@ -306,7 +333,7 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 			OSImage:         n.Status.NodeInfo.OSImage,
 			KernelVersion:   n.Status.NodeInfo.KernelVersion,
 			KubeletVersion:  n.Status.NodeInfo.KubeletVersion,
-			ContainerEngine: n.Status.NodeInfo.ContainerRuntimeVersion,
+			ContainerEngine: sanitizeContainerRuntime(n.Status.NodeInfo.ContainerRuntimeVersion),
 			Architecture:    n.Status.NodeInfo.Architecture,
 			Conditions:      make(map[string]string),
 		}
@@ -384,22 +411,62 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 			nodeStat.OtherWorkloadRAMBytes = sumOther
 		}
 
-		// Top memory consumers (non-zero-scale 24/7 workloads)
+		// Assign zero-scale services to the node
+		nodeStat.ZeroScaleServices = status.ZeroScaleApps
+
+		// Classify memory consumers into Zero-Scale Supporting vs Legacy Monoliths
 		podsOnNode := nodePods[n.Metadata.Name]
 		sort.Slice(podsOnNode, func(i, j int) bool {
 			return podsOnNode[i].memBytes > podsOnNode[j].memBytes
 		})
+
 		var topHogs []MemoryHog
-		for i := 0; i < len(podsOnNode) && i < 3; i++ {
-			if podsOnNode[i].memBytes > 0 {
-				topHogs = append(topHogs, MemoryHog{
-					Name:      podsOnNode[i].name,
-					Namespace: podsOnNode[i].namespace,
-					RAMBytes:  podsOnNode[i].memBytes,
-					Display:   formatPodHogName(podsOnNode[i].namespace, podsOnNode[i].name),
-				})
+		var supportingHogs []MemoryHog
+		var legacyHogs []MemoryHog
+		var supportingRAM int64
+		var legacyRAM int64
+
+		for _, p := range podsOnNode {
+			if p.memBytes <= 0 {
+				continue
+			}
+			isSupp := isZeroScaleSupportingPod(p.namespace, p.name)
+			cat := "legacy"
+			if isSupp {
+				cat = "supporting"
+				supportingRAM += p.memBytes
+			} else {
+				legacyRAM += p.memBytes
+			}
+
+			cleanId := sanitizePodIdentifier(p.name)
+			hog := MemoryHog{
+				Name:      cleanId,
+				Namespace: p.namespace,
+				RAMBytes:  p.memBytes,
+				Display:   formatPodHogName(p.namespace, p.name),
+				Category:  cat,
+			}
+
+			if isSupp {
+				if len(supportingHogs) < 6 {
+					supportingHogs = append(supportingHogs, hog)
+				}
+			} else {
+				if len(legacyHogs) < 6 {
+					legacyHogs = append(legacyHogs, hog)
+				}
+			}
+
+			if len(topHogs) < 12 {
+				topHogs = append(topHogs, hog)
 			}
 		}
+
+		nodeStat.SupportingRAMBytes = supportingRAM
+		nodeStat.LegacyRAMBytes = legacyRAM
+		nodeStat.ZeroScaleSupporting = supportingHogs
+		nodeStat.LegacyMonoliths = legacyHogs
 		nodeStat.TopMemoryConsumers = topHogs
 
 		status.Nodes = append(status.Nodes, nodeStat)
@@ -416,15 +483,6 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 	status.Summary.UsedRAMBytes = totalUsedRAMBytes
 	if totalRAMBytes > 0 {
 		status.Summary.RAMUsagePercent = (float64(totalUsedRAMBytes) / float64(totalRAMBytes)) * 100.0
-	}
-
-	// Zero-scale apps discovery
-	status.ZeroScaleApps = c.collectZeroScaleApps()
-	status.Summary.TotalZeroApps = len(status.ZeroScaleApps)
-	for _, a := range status.ZeroScaleApps {
-		if a.State == "active" {
-			status.Summary.ActiveZeroApps++
-		}
 	}
 
 	// Other site links discovered from Ingresses
@@ -562,6 +620,83 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 		status.Operators.Longhorn.Status = "Degraded"
 	}
 
+	// Compute CloudNativePG Resource Usage from Pod Metrics
+	var pgOperatorRAM int64
+	var pgOperatorCPU int64
+	var pgClusterRAM int64
+	var pgClusterCPU int64
+	for key, usage := range podMetricsMap {
+		if strings.HasPrefix(key, "cnpg-system/") {
+			pgOperatorRAM += usage.memBytes
+			pgOperatorCPU += usage.cpuNano
+		} else if strings.HasPrefix(key, "default/ha-postgres-") {
+			pgClusterRAM += usage.memBytes
+			pgClusterCPU += usage.cpuNano
+		}
+	}
+	status.Operators.Postgres.OperatorRAMBytes = pgOperatorRAM
+	status.Operators.Postgres.OperatorCPUCores = float64(pgOperatorCPU) / 1e9
+	status.Operators.Postgres.DatabaseRAMBytes = pgClusterRAM
+	status.Operators.Postgres.DatabaseCPUCores = float64(pgClusterCPU) / 1e9
+	status.Operators.Postgres.TotalRAMBytes = pgOperatorRAM + pgClusterRAM
+	status.Operators.Postgres.TotalCPUCores = float64(pgOperatorCPU+pgClusterCPU) / 1e9
+
+	// Compute Longhorn Resource Usage from Pod Metrics
+	var lhManagerRAM int64
+	var lhManagerCPU int64
+	var lhTotalRAM int64
+	var lhTotalCPU int64
+	for key, usage := range podMetricsMap {
+		if strings.HasPrefix(key, "longhorn-system/") {
+			lhTotalRAM += usage.memBytes
+			lhTotalCPU += usage.cpuNano
+			if strings.Contains(key, "longhorn-manager") {
+				lhManagerRAM += usage.memBytes
+				lhManagerCPU += usage.cpuNano
+			}
+		}
+	}
+	status.Operators.Longhorn.ManagerRAMBytes = lhManagerRAM
+	status.Operators.Longhorn.ManagerCPUCores = float64(lhManagerCPU) / 1e9
+	status.Operators.Longhorn.TotalRAMBytes = lhTotalRAM
+	status.Operators.Longhorn.TotalCPUCores = float64(lhTotalCPU) / 1e9
+
+	// Compute Total Stack Resources (Zero-scale apps + Gateway pod + CloudNativePG + Longhorn)
+	var totalZeroAppsRAM int64
+	var totalZeroAppsCPU float64
+	for _, app := range status.ZeroScaleApps {
+		totalZeroAppsRAM += app.RAMBytes
+		totalZeroAppsCPU += app.CPUCores
+	}
+	for key, usage := range podMetricsMap {
+		if strings.HasPrefix(key, "default/zero-scale-gateway-") {
+			if totalZeroAppsRAM < usage.memBytes {
+				totalZeroAppsRAM = usage.memBytes
+			}
+			if totalZeroAppsCPU < float64(usage.cpuNano)/1e9 {
+				totalZeroAppsCPU = float64(usage.cpuNano) / 1e9
+			}
+		}
+	}
+
+	stackTotal := ZeroScaleStackTotal{
+		ZeroScaleRAMBytes: totalZeroAppsRAM,
+		ZeroScaleCPUCores: totalZeroAppsCPU,
+		PostgresRAMBytes:  status.Operators.Postgres.TotalRAMBytes,
+		PostgresCPUCores:  status.Operators.Postgres.TotalCPUCores,
+		LonghornRAMBytes:  status.Operators.Longhorn.TotalRAMBytes,
+		LonghornCPUCores:  status.Operators.Longhorn.TotalCPUCores,
+		TotalRAMBytes:     totalZeroAppsRAM + status.Operators.Postgres.TotalRAMBytes + status.Operators.Longhorn.TotalRAMBytes,
+		TotalCPUCores:     totalZeroAppsCPU + status.Operators.Postgres.TotalCPUCores + status.Operators.Longhorn.TotalCPUCores,
+	}
+	if status.Summary.TotalRAMBytes > 0 {
+		stackTotal.ClusterRAMPercent = (float64(stackTotal.TotalRAMBytes) / float64(status.Summary.TotalRAMBytes)) * 100.0
+	}
+	if status.Summary.TotalCores > 0 {
+		stackTotal.ClusterCPUPercent = (stackTotal.TotalCPUCores / float64(status.Summary.TotalCores)) * 100.0
+	}
+	status.StackTotal = stackTotal
+
 	// Calculate Architecture & Zero-Scale Memory Efficiency
 	totalApps := len(status.ZeroScaleApps)
 	activeApps := status.Summary.ActiveZeroApps
@@ -589,9 +724,9 @@ func (c *Collector) Collect() (*ClusterStatus, error) {
 
 	// Live database consumption from ha-postgres pods if available
 	var liveDBBytes int64
-	for key, b := range podMetricsMap {
+	for key, usage := range podMetricsMap {
 		if strings.Contains(key, "ha-postgres") {
-			liveDBBytes += b
+			liveDBBytes += usage.memBytes
 		}
 	}
 	actualDBMemoryMB := int64(280)
@@ -684,12 +819,75 @@ func (c *Collector) formatForAuth(raw *ClusterStatus, token string) *ClusterStat
 			nodeClone := n
 			nodeClone.KernelVersion = "🔒 Protected (RBAC Required)"
 			nodeClone.KubeletVersion = "🔒 Protected (RBAC Required)"
+			nodeClone.ContainerEngine = sanitizeContainerRuntime(n.ContainerEngine)
 			cloneNodes[i] = nodeClone
 		}
 		clone.Nodes = cloneNodes
 	}
 
 	return &clone
+}
+
+func (c *Collector) getSystemSliceDir() string {
+	if c.systemSliceDir != "" {
+		if info, err := os.Stat(c.systemSliceDir); err == nil && info.IsDir() {
+			return c.systemSliceDir
+		}
+	}
+
+	// 1. Check /proc/self/cgroup to discover the container's cgroup prefix
+	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, ":")
+			if len(parts) >= 3 {
+				cgroupPath := parts[2]
+				if idx := strings.Index(cgroupPath, "/system.slice"); idx != -1 {
+					candidate := filepath.Join("/sys/fs/cgroup", cgroupPath[:idx+len("/system.slice")])
+					if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+						c.systemSliceDir = candidate
+						return candidate
+					}
+				}
+				parent := filepath.Dir(cgroupPath)
+				candidate := filepath.Join("/sys/fs/cgroup", parent, "system.slice")
+				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+					c.systemSliceDir = candidate
+					return candidate
+				}
+			}
+		}
+	}
+
+	// 2. Direct /sys/fs/cgroup/system.slice
+	if info, err := os.Stat("/sys/fs/cgroup/system.slice"); err == nil && info.IsDir() {
+		c.systemSliceDir = "/sys/fs/cgroup/system.slice"
+		return c.systemSliceDir
+	}
+
+	// 3. Fallback: Search /sys/fs/cgroup for any directory named system.slice
+	var found string
+	_ = filepath.WalkDir("/sys/fs/cgroup", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == "system.slice" {
+			found = path
+			return filepath.SkipAll
+		}
+		if d.IsDir() && strings.Count(path, string(os.PathSeparator)) > 8 {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if found != "" {
+		c.systemSliceDir = found
+	}
+	return found
 }
 
 func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
@@ -731,20 +929,79 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 		},
 	}
 
-	// Check if active by querying systemctl if local or checking transient service units
+	now := time.Now()
+	c.cpuSamplesMu.Lock()
+	defer c.cpuSamplesMu.Unlock()
+
+	systemSliceDir := c.getSystemSliceDir()
+
 	for i := range apps {
-		unit := fmt.Sprintf("app-%s", apps[i].Host)
-		cmd := exec.Command("systemctl", "is-active", unit)
-		if err := cmd.Run(); err == nil {
-			apps[i].State = "active"
-			continue
+		host := apps[i].Host
+		unit := fmt.Sprintf("app-%s.service", host)
+		transientFile := fmt.Sprintf("/run/systemd/transient/%s", unit)
+
+		var appDir string
+		if systemSliceDir != "" {
+			cand := filepath.Join(systemSliceDir, unit)
+			if info, err := os.Stat(cand); err == nil && info.IsDir() {
+				appDir = cand
+			}
 		}
-		transientFile := fmt.Sprintf("/run/systemd/transient/%s.service", unit)
+
+		// Also check transient unit file
+		hasTransient := false
 		if _, err := os.Stat(transientFile); err == nil {
-			apps[i].State = "active"
-			continue
+			hasTransient = true
 		}
-		apps[i].State = "idle"
+
+		if appDir != "" || hasTransient {
+			apps[i].State = "active"
+
+			if appDir != "" {
+				// Read memory.current
+				memFile := filepath.Join(appDir, "memory.current")
+				if memData, err := os.ReadFile(memFile); err == nil {
+					if memBytes, err := strconv.ParseInt(strings.TrimSpace(string(memData)), 10, 64); err == nil {
+						apps[i].RAMBytes = memBytes
+					}
+				}
+
+				// Read cpu.stat
+				cpuFile := filepath.Join(appDir, "cpu.stat")
+				if cpuData, err := os.ReadFile(cpuFile); err == nil {
+					var cpuUSec int64
+					for _, line := range strings.Split(string(cpuData), "\n") {
+						line = strings.TrimSpace(line)
+						if strings.HasPrefix(line, "usage_usec ") {
+							fields := strings.Fields(line)
+							if len(fields) >= 2 {
+								cpuUSec, _ = strconv.ParseInt(fields[1], 10, 64)
+								break
+							}
+						}
+					}
+
+					cpuNS := cpuUSec * 1000
+					if prevNS, okNS := c.prevAppCPUNSec[host]; okNS {
+						if prevT, okT := c.prevAppCPUTime[host]; okT {
+							deltaT := now.Sub(prevT).Nanoseconds()
+							deltaNS := cpuNS - prevNS
+							if deltaT > 0 && deltaNS >= 0 {
+								apps[i].CPUCores = float64(deltaNS) / float64(deltaT)
+							}
+						}
+					}
+					c.prevAppCPUNSec[host] = cpuNS
+					c.prevAppCPUTime[host] = now
+				}
+			}
+		} else {
+			apps[i].State = "idle"
+			apps[i].RAMBytes = 0
+			apps[i].CPUCores = 0
+			delete(c.prevAppCPUNSec, host)
+			delete(c.prevAppCPUTime, host)
+		}
 	}
 
 	return apps
@@ -780,6 +1037,15 @@ func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 				Category:    "Core & Infrastructure",
 				Icon:        "📈",
 				Description: "Cluster metrics server, alerts, targets, and time-series graphing",
+			},
+			{
+				Name:        "Temporal Workflow Orchestrator",
+				Host:        "temporal.ffxm.cc",
+				URL:         "https://temporal.ffxm.cc/",
+				Namespace:   "temporal",
+				Category:    "Core & Infrastructure",
+				Icon:        "⏳",
+				Description: "Durable workflow execution engine and management web UI",
 			},
 		},
 	}
@@ -837,6 +1103,29 @@ func parseQuantityBytes(str string) int64 {
 	return v
 }
 
+func parseQuantityNano(str string) int64 {
+	str = strings.TrimSpace(str)
+	if str == "" || str == "0" {
+		return 0
+	}
+	if strings.HasSuffix(str, "n") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "n"), 10, 64)
+		return v
+	}
+	if strings.HasSuffix(str, "u") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "u"), 10, 64)
+		return v * 1000
+	}
+	if strings.HasSuffix(str, "m") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(str, "m"), 10, 64)
+		return v * 1000000
+	}
+	if f, err := strconv.ParseFloat(str, 64); err == nil {
+		return int64(f * 1e9)
+	}
+	return 0
+}
+
 func formatPodHogName(namespace, podName string) string {
 	lower := strings.ToLower(podName)
 	if strings.Contains(lower, "yacy") {
@@ -861,7 +1150,14 @@ func formatPodHogName(namespace, podName string) string {
 		return "Nextcloud Hub"
 	}
 	if strings.Contains(lower, "ha-postgres") {
-		return "PostgreSQL (" + podName + ")"
+		parts := strings.Split(lower, "-")
+		if len(parts) >= 3 {
+			return fmt.Sprintf("PostgreSQL (ha-postgres-%s)", parts[len(parts)-1])
+		}
+		return "PostgreSQL (ha-postgres)"
+	}
+	if strings.Contains(lower, "share-manager") {
+		return "share-manager-pvc"
 	}
 	if strings.Contains(lower, "instance-manager") {
 		return "Longhorn Engine"
@@ -869,8 +1165,17 @@ func formatPodHogName(namespace, podName string) string {
 	if strings.Contains(lower, "longhorn-manager") {
 		return "Longhorn Manager"
 	}
-	if strings.Contains(lower, "nginx-ingress") {
+	if strings.Contains(lower, "longhorn-csi") {
+		return "Longhorn CSI"
+	}
+	if strings.Contains(lower, "engine-image") {
+		return "Longhorn Engine Image"
+	}
+	if strings.Contains(lower, "nginx-ingress") || strings.Contains(lower, "ingress-nginx") {
 		return "NGINX Ingress"
+	}
+	if strings.Contains(lower, "cnpg") || strings.Contains(lower, "cloudnative-pg") {
+		return "CloudNativePG Operator"
 	}
 	if strings.Contains(lower, "microk8s-microk8s") || strings.Contains(lower, "minio") {
 		return "MinIO Storage"
@@ -885,22 +1190,93 @@ func formatPodHogName(namespace, podName string) string {
 		return "PAPI Prod"
 	}
 
-	cleanName := podName
-	parts := strings.Split(cleanName, "-")
-	if len(parts) > 2 && len(parts[len(parts)-1]) == 5 {
-		parts = parts[:len(parts)-1]
-		if len(parts) > 1 && (len(parts[len(parts)-1]) >= 8 && len(parts[len(parts)-1]) <= 10) {
-			parts = parts[:len(parts)-1]
-		}
-		cleanName = strings.Join(parts, "-")
-	}
-	if namespace != "" && namespace != "default" {
+	cleanName := sanitizePodIdentifier(podName)
+	if namespace != "" && namespace != "default" && namespace != "kube-system" {
 		return fmt.Sprintf("%s (%s)", cleanName, namespace)
 	}
 	return cleanName
 }
 
+func sanitizeContainerRuntime(version string) string {
+	parts := strings.Split(version, "://")
+	return parts[0]
+}
+
+func sanitizePodIdentifier(name string) string {
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "share-manager") {
+		return "share-manager-pvc"
+	}
+	if strings.Contains(lower, "longhorn-manager") {
+		return "longhorn-manager"
+	}
+	if strings.Contains(lower, "instance-manager") {
+		return "longhorn-engine"
+	}
+	if strings.Contains(lower, "longhorn-csi") {
+		return "longhorn-csi-plugin"
+	}
+	if strings.Contains(lower, "engine-image") {
+		return "longhorn-engine-image"
+	}
+	if strings.Contains(lower, "nginx-ingress") || strings.Contains(lower, "ingress-nginx") {
+		return "nginx-ingress-controller"
+	}
+	if strings.Contains(lower, "ha-postgres") {
+		parts := strings.Split(lower, "-")
+		if len(parts) >= 3 {
+			return fmt.Sprintf("ha-postgres-%s", parts[len(parts)-1])
+		}
+		return "ha-postgres"
+	}
+	if strings.Contains(lower, "cnpg") || strings.Contains(lower, "cloudnative-pg") {
+		return "cnpg-operator"
+	}
+
+	// Remove UUIDs (e.g. 2066e182-42b9-439e-9552-711c6c88fbe7)
+	uuidRegex := regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
+	cleaned := uuidRegex.ReplaceAllString(name, "")
+
+	// Remove hex hashes of length >= 16
+	hexRegex := regexp.MustCompile(`[0-9a-fA-F]{16,}`)
+	cleaned = hexRegex.ReplaceAllString(cleaned, "")
+
+	// Strip trailing deployment replica suffixes (e.g. -7cfd78c457-6g4pn)
+	parts := strings.Split(cleaned, "-")
+	for len(parts) > 1 {
+		last := parts[len(parts)-1]
+		if len(last) == 5 || (len(last) >= 8 && len(last) <= 10) {
+			parts = parts[:len(parts)-1]
+		} else {
+			break
+		}
+	}
+	cleaned = strings.Trim(strings.Join(parts, "-"), "-_")
+	if cleaned == "" {
+		return "workload"
+	}
+	return cleaned
+}
+
 func isZeroScalePod(namespace, podName string) bool {
 	lower := strings.ToLower(podName)
 	return strings.HasPrefix(lower, "zero-scale-") || strings.Contains(lower, "zero-scale-gateway")
+}
+
+func isZeroScaleSupportingPod(namespace, podName string) bool {
+	lower := strings.ToLower(podName)
+	ns := strings.ToLower(namespace)
+	if strings.Contains(lower, "share-manager") {
+		return true
+	}
+	if strings.Contains(lower, "ha-postgres") || strings.Contains(lower, "cnpg") || strings.Contains(lower, "cloudnative-pg") || ns == "cnpg-system" {
+		return true
+	}
+	if strings.Contains(lower, "longhorn-manager") || strings.Contains(lower, "instance-manager") || strings.Contains(lower, "longhorn") || ns == "longhorn-system" {
+		return true
+	}
+	if strings.Contains(lower, "nginx-ingress") || strings.Contains(lower, "ingress-nginx") || ns == "ingress" {
+		return true
+	}
+	return false
 }

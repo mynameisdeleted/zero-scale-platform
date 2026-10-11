@@ -12,6 +12,10 @@ function renderZeroScale(zeroApps, isAuthed, token) {
     const stateLabel = app.state === 'active' ? '🟢 Active' : '💤 Scaled to Zero';
     const logsUrl = isAuthed && token ? `${app.logs_url}?token=${encodeURIComponent(token)}` : app.logs_url;
 
+    const resHtml = app.state === 'active'
+      ? `<span style="color: var(--green); font-weight:600;">⚡ ${formatBytes(app.ram_bytes)} RAM</span> &bull; <span style="color: var(--blue); font-weight:600;">${formatCores(app.cpu_cores)} CPU</span>`
+      : `<span style="color: var(--text-muted);">⚡ 0 B RAM &bull; 0 cores (Scaled to 0)</span>`;
+
     if (!card) {
       card = document.createElement('div');
       card.className = 'zero-card';
@@ -21,6 +25,9 @@ function renderZeroScale(zeroApps, isAuthed, token) {
           <div class="zero-host">${app.host}</div>
           <div class="zero-status-row">
             <span class="status-badge ${stateCls} zero-badge">${stateLabel}</span>
+          </div>
+          <div class="zero-resource-row" style="text-align:center; font-size:12px; margin-bottom:8px;">
+            ${resHtml}
           </div>
           <div class="zero-desc">${app.description || 'Zero-scale dynamic service'}</div>
         </div>
@@ -36,6 +43,10 @@ function renderZeroScale(zeroApps, isAuthed, token) {
       if (badge && badge.innerText !== stateLabel) {
         badge.className = 'status-badge ' + stateCls + ' zero-badge';
         badge.innerText = stateLabel;
+      }
+      const resEl = card.querySelector('.zero-resource-row');
+      if (resEl && resEl.innerHTML !== resHtml) {
+        resEl.innerHTML = resHtml;
       }
       const logsLink = card.querySelector('.btn-logs');
       if (logsLink && logsLink.href !== logsUrl) {

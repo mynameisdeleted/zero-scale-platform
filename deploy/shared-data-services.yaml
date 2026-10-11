@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shared-mysql-admin
+  namespace: default
+  labels:
+    app: shared-mysql
+    app.kubernetes.io/part-of: zero-scale-platform
+type: Opaque
+stringData:
+  MYSQL_ROOT_PASSWORD: "zero-scale-mysql-root-secure-pass"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-mysql-pvc
+  namespace: default
+  labels:
+    app: shared-mysql
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: longhorn-2-replicas
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shared-mysql
+  namespace: default
+  labels:
+    app: shared-mysql
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  type: ClusterIP
+  ports:
+  - name: mysql
+    port: 3306
+    targetPort: 3306
+    protocol: TCP
+  selector:
+    app: shared-mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: shared-mysql
+  namespace: default
+  labels:
+    app: shared-mysql
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  serviceName: shared-mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shared-mysql
+  template:
+    metadata:
+      labels:
+        app: shared-mysql
+        app.kubernetes.io/part-of: zero-scale-platform
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        args:
+        - "--default-authentication-plugin=mysql_native_password"
+        - "--character-set-server=utf8mb4"
+        - "--collation-server=utf8mb4_unicode_ci"
+        - "--innodb-buffer-pool-size=256M"
+        - "--max-connections=200"
+        ports:
+        - name: mysql
+          containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shared-mysql-admin
+              key: MYSQL_ROOT_PASSWORD
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - "/usr/bin/mysqladmin"
+            - "ping"
+            - "-h"
+            - "localhost"
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: mysql-data
+        persistentVolumeClaim:
+          claimName: shared-mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shared-redis
+  namespace: default
+  labels:
+    app: shared-redis
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  type: ClusterIP
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: shared-redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shared-redis
+  namespace: default
+  labels:
+    app: shared-redis
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shared-redis
+  template:
+    metadata:
+      labels:
+        app: shared-redis
+        app.kubernetes.io/part-of: zero-scale-platform
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - "--maxmemory"
+        - "128mb"
+        - "--maxmemory-policy"
+        - "allkeys-lru"
+        ports:
+        - name: redis
+          containerPort: 6379
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5

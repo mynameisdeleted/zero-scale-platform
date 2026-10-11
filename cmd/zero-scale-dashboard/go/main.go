@@ -129,16 +129,17 @@ func main() {
 
 		if path == "/" || path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			assetHandler.ServeHTTP(w, r)
 			return
 		}
 
 		if strings.HasSuffix(path, ".css") {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		} else if strings.HasSuffix(path, ".js") {
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		}
 
 		assetHandler.ServeHTTP(w, r)
