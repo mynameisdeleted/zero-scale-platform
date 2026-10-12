@@ -62,10 +62,21 @@ func ProvisionMySQL(app *AppConfig, namespace string) (dbName, dbUser, dbPass, e
 	}
 
 	adminData, err := GetSecretData("shared-mysql-admin", namespace)
+	var rootPass string
 	if err != nil || adminData["MYSQL_ROOT_PASSWORD"] == "" {
-		return "", "", "", "", fmt.Errorf("secret 'shared-mysql-admin' missing MYSQL_ROOT_PASSWORD in namespace '%s'", namespace)
+		// Auto-generate high-entropy root password and persist to Kubernetes Secret
+		rootPass = GeneratePassword(24)
+		if err := CreateOrUpdateSecret("shared-mysql-admin", namespace, map[string]string{
+			"MYSQL_ROOT_PASSWORD": rootPass,
+		}, map[string]string{
+			"app": "shared-mysql",
+			"app.kubernetes.io/part-of": "zero-scale-platform",
+		}); err != nil {
+			return "", "", "", "", fmt.Errorf("failed to auto-create 'shared-mysql-admin' secret: %w", err)
+		}
+	} else {
+		rootPass = adminData["MYSQL_ROOT_PASSWORD"]
 	}
-	rootPass := adminData["MYSQL_ROOT_PASSWORD"]
 
 	// Reuse existing password from app Secret if already created
 	existingSecret, _ := GetSecretData(app.SecretName(), namespace)

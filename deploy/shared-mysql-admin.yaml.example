@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shared-mysql-admin
+  namespace: default
+  labels:
+    app: shared-mysql
+    app.kubernetes.io/part-of: zero-scale-platform
+type: Opaque
+stringData:
+  # Random 24-char password. If deploying manually, replace with a secure random secret.
+  # If missing, zero-scale-ctl can auto-generate and apply this secret on first provision.
+  MYSQL_ROOT_PASSWORD: "CHANGE_ME_GENERATE_SECURE_PASSWORD"
