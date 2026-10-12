@@ -46,6 +46,7 @@ type AppConfig struct {
 	User        string            // Execution user in container (e.g. "root", "nobody")
 	DynamicUser bool              // Whether to use transient DynamicUser=yes (default true)
 	Env         map[string]string // Custom environment variables
+	Secrets     map[string]string // Custom managed secrets (key -> type, e.g. "generate")
 	ConfigFiles []string          // Auxiliary config files to template and upload to /opt/apps/
 	Launcher    string            // Explicit full launcher script override (optional)
 }
@@ -137,6 +138,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		scaleToZero    = true
 		idleTimeout    string
 		configFiles    []string
+		secretsMap     = make(map[string]string)
 		currentSection = ""
 		currentList    = ""
 
@@ -183,6 +185,13 @@ func LoadConfig(filePath string) (interface{}, error) {
 				hostnames = append(hostnames, val)
 			} else if currentList == "config_file" || currentList == "config_files" || currentList == "configs" || currentList == "config" {
 				configFiles = append(configFiles, val)
+			} else if currentSection == "secrets" || currentList == "secrets" || currentList == "secret" {
+				if strings.Contains(val, ":") {
+					sp := strings.SplitN(val, ":", 2)
+					secretsMap[strings.TrimSpace(sp[0])] = strings.Trim(strings.TrimSpace(sp[1]), "\"'\t ")
+				} else {
+					secretsMap[val] = "generate"
+				}
 			}
 			continue
 		}
@@ -239,6 +248,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 				}
 			} else if currentSection == "env" {
 				envVars[k] = v
+			} else if currentSection == "secrets" || currentSection == "secret" {
+				secretsMap[k] = v
 			} else {
 				currentSection = ""
 				currentList = ""
@@ -380,6 +391,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		User:        user,
 		DynamicUser: dynamicUser,
 		Env:         envVars,
+		Secrets:     secretsMap,
 		ConfigFiles: resolvedConfigFiles,
 		Launcher:    launcherScript,
 	}, nil

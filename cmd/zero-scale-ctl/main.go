@@ -245,14 +245,14 @@ func handleApply(configPath, expandPath, namespace string) error {
 	fmt.Printf("==> Reconciling Zero-Scale Application '%s' for host '%s'...\n", app.AppName(), app.CanonicalHost())
 
 	// Step A: Provision database schema, user, and secrets
-	if app.Database != nil || app.Redis != nil {
+	if app.Database != nil || app.Redis != nil || len(app.Secrets) > 0 {
 		fmt.Println("--> Step 1: Checking and provisioning shared data layer & secrets...")
 		err = ProvisionDataLayer(app, namespace)
 		if err != nil {
-			return fmt.Errorf("data layer provisioning failed: %w", err)
+			return fmt.Errorf("data layer/secrets provisioning failed: %w", err)
 		}
 	} else {
-		fmt.Println("--> Step 1: No database configured. Skipping data layer.")
+		fmt.Println("--> Step 1: No database or secrets configured. Skipping data layer.")
 	}
 
 	// Step B: Upload local binary directly to persistent volume & configure launchers
@@ -266,7 +266,7 @@ func handleApply(configPath, expandPath, namespace string) error {
 	if len(app.ConfigFiles) > 0 {
 		fmt.Printf("--> Step 2.5: Templating and deploying %d auxiliary config file(s)...\n", len(app.ConfigFiles))
 		envMap := make(map[string]string)
-		if app.Database != nil {
+		if app.Database != nil || len(app.Secrets) > 0 {
 			if dbCM, err := GetConfigMapData(app.ConfigMapName(), namespace); err == nil {
 				for k, v := range dbCM {
 					envMap[k] = v
@@ -305,6 +305,8 @@ func handleApply(configPath, expandPath, namespace string) error {
 	if app.Database != nil {
 		cmData["database_configmap"] = app.ConfigMapName()
 		cmData["database_secret"] = app.SecretName()
+	} else if len(app.Secrets) > 0 {
+		cmData["database_secret"] = app.SecretName()
 	}
 	if app.Mounts != "" {
 		cmData["mounts"] = app.Mounts
@@ -336,7 +338,7 @@ func handleApply(configPath, expandPath, namespace string) error {
 
 			// Collect all app environment variables to export for the init command
 			var envExports []string
-			if app.Database != nil {
+			if app.Database != nil || len(app.Secrets) > 0 {
 				if dbCM, err := GetConfigMapData(app.ConfigMapName(), namespace); err == nil {
 					for k, v := range dbCM {
 						envExports = append(envExports, fmt.Sprintf("export %s=%q", k, v))

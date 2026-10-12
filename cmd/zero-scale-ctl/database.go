@@ -2,10 +2,21 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"math/big"
 	"strings"
 )
+
+// GenerateRandomBase64 creates cryptographically secure base64-encoded random bytes.
+func GenerateRandomBase64(byteCount int) (string, error) {
+	b := make([]byte, byteCount)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
+}
 
 // GeneratePassword creates a secure random alphanumeric password.
 func GeneratePassword(length int) string {
@@ -274,6 +285,39 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 		}
 		if app.Redis.EnvPort != "" {
 			configMapData[app.Redis.EnvPort] = redisPort
+		}
+	}
+
+	// Managed secrets: check existing Secret in Kubernetes to preserve existing values,
+	// or auto-generate if requested and missing.
+	if len(app.Secrets) > 0 {
+		existingSecret, _ := GetSecretData(app.SecretName(), namespace)
+		for k, genRule := range app.Secrets {
+			rule := strings.TrimSpace(genRule)
+			if existingVal, exists := existingSecret[k]; exists && existingVal != "" {
+				// Preserve existing value across applies
+				secretData[k] = existingVal
+			} else {
+				switch strings.ToLower(rule) {
+				case "generate", "generate_base64_32", "base64", "base64_32":
+					val, err := GenerateRandomBase64(32)
+					if err != nil {
+						return fmt.Errorf("failed generating random secret for '%s': %w", k, err)
+					}
+					secretData[k] = val
+					fmt.Printf("--> Generated new 32-byte base64 secret for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+				case "password", "generate_password", "generate_password_24":
+					val := GeneratePassword(24)
+					secretData[k] = val
+					fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+				case "generate_password_32":
+					val := GeneratePassword(32)
+					secretData[k] = val
+					fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+				default:
+					secretData[k] = rule
+				}
+			}
 		}
 	}
 
