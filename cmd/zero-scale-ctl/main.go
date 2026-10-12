@@ -262,6 +262,32 @@ func handleApply(configPath, expandPath, namespace string) error {
 		return fmt.Errorf("binary deployment failed: %w", err)
 	}
 
+	// Step B.5: Template auxiliary config files (${VAR} expansion with secrets) and upload to /opt/apps/
+	if len(app.ConfigFiles) > 0 {
+		fmt.Printf("--> Step 2.5: Templating and deploying %d auxiliary config file(s)...\n", len(app.ConfigFiles))
+		envMap := make(map[string]string)
+		if app.Database != nil {
+			if dbCM, err := GetConfigMapData(app.ConfigMapName(), namespace); err == nil {
+				for k, v := range dbCM {
+					envMap[k] = v
+				}
+			}
+			if dbSec, err := GetSecretData(app.SecretName(), namespace); err == nil {
+				for k, v := range dbSec {
+					envMap[k] = v
+				}
+			}
+		}
+		for k, v := range app.Env {
+			envMap[k] = v
+		}
+
+		err = DeployConfigFiles(app, namespace, envMap)
+		if err != nil {
+			return fmt.Errorf("config file deployment failed: %w", err)
+		}
+	}
+
 	// Step C: Create or update zero-scale-app-<name> ConfigMap
 	fmt.Printf("--> Step 3: Registering zero-scale-app-%s with gateway...\n", app.AppName())
 	cmData := map[string]string{

@@ -45,6 +45,7 @@ type AppConfig struct {
 	User        string            // Execution user in container (e.g. "root", "nobody")
 	DynamicUser bool              // Whether to use transient DynamicUser=yes (default true)
 	Env         map[string]string // Custom environment variables
+	ConfigFiles []string          // Auxiliary config files to template and upload to /opt/apps/
 	Launcher    string            // Explicit full launcher script override (optional)
 }
 
@@ -133,6 +134,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		launcherLines  []string
 		mounts         string
 		scaleToZero    = true
+		configFiles    []string
 		currentSection = ""
 		currentList    = ""
 
@@ -172,11 +174,13 @@ func LoadConfig(filePath string) (interface{}, error) {
 			currentList = ""
 		}
 
-		// List items (e.g. "- fdm.kube.fairfaxmedia.net")
+		// List items (e.g. "- fdm.kube.fairfaxmedia.net" or "- ./headscale-config.yaml")
 		if strings.HasPrefix(trimmed, "- ") {
 			val := strings.Trim(trimmed[2:], " \t\"'")
 			if currentList == "hostname" || currentList == "hostnames" || currentList == "host" {
 				hostnames = append(hostnames, val)
+			} else if currentList == "config_file" || currentList == "config_files" || currentList == "configs" || currentList == "config" {
+				configFiles = append(configFiles, val)
 			}
 			continue
 		}
@@ -261,6 +265,15 @@ func LoadConfig(filePath string) (interface{}, error) {
 					mounts = v
 				case "scale_to_zero":
 					scaleToZero = strings.ToLower(v) != "false"
+				case "config_file", "config":
+					configFiles = append(configFiles, v)
+				case "config_files", "configs":
+					// Could be comma-separated or space-separated
+					for _, item := range strings.Fields(strings.ReplaceAll(v, ",", " ")) {
+						if item != "" {
+							configFiles = append(configFiles, item)
+						}
+					}
 				}
 			}
 		}
@@ -299,6 +312,56 @@ func LoadConfig(filePath string) (interface{}, error) {
 		launcherScript = strings.Join(launcherLines, "\n")
 	}
 
+	// Resolve and validate configFiles relative to config file directory
+	cfgDir := filepath.Dir(filePath)
+	absCfgDir, _ := filepath.Abs(cfgDir)
+
+	var resolvedConfigFiles []string
+	binBase := filepath.Base(binaryPath)
+	binBase = strings.TrimSuffix(binBase, filepath.Ext(binBase))
+	primaryName := strings.ToLower(binBase)
+
+	// Also extract short name from hostname (e.g. hs from hs.ffxm.cc)
+	var hostShort string
+	if len(hostnames) > 0 {
+		parts := strings.Split(hostnames[0], ".")
+		re := regexp.MustCompile("[^a-z0-9]")
+		hostShort = re.ReplaceAllString(strings.ToLower(parts[0]), "")
+	}
+
+	for _, cf := range configFiles {
+		cf = strings.TrimSpace(cf)
+		if cf == "" {
+			continue
+		}
+		base := filepath.Base(cf)
+		baseLower := strings.ToLower(base)
+
+		// Verification: file must start with binary name prefix or app short name prefix
+		// e.g. headscale-*, headscale_*, headscale.*, hs-*, hs_*, hs.*
+		validPrefix := false
+		if strings.HasPrefix(baseLower, primaryName+"-") ||
+			strings.HasPrefix(baseLower, primaryName+"_") ||
+			strings.HasPrefix(baseLower, primaryName+".") {
+			validPrefix = true
+		} else if hostShort != "" && (strings.HasPrefix(baseLower, hostShort+"-") ||
+			strings.HasPrefix(baseLower, hostShort+"_") ||
+			strings.HasPrefix(baseLower, hostShort+".")) {
+			validPrefix = true
+		}
+
+		if !validPrefix {
+			return nil, fmt.Errorf("config_file '%s' must start with service prefix '%s-' or '%s-' (e.g. '%s-config.yaml') to avoid conflicts on shared volume",
+				base, primaryName, hostShort, primaryName)
+		}
+
+		resolvedPath := cf
+		if !filepath.IsAbs(resolvedPath) {
+			resolvedPath = filepath.Clean(filepath.Join(absCfgDir, cf))
+		}
+		resolvedConfigFiles = append(resolvedConfigFiles, resolvedPath)
+	}
+
 	return &AppConfig{
 		Hostnames:   hostnames,
 		BinaryPath:  binaryPath,
@@ -312,6 +375,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		User:        user,
 		DynamicUser: dynamicUser,
 		Env:         envVars,
+		ConfigFiles: resolvedConfigFiles,
 		Launcher:    launcherScript,
 	}, nil
 }

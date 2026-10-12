@@ -210,9 +210,19 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 		// Map environment variables requested by binary
 		if app.Database.EnvAddress != "" {
 			configMapData[app.Database.EnvAddress] = endpoint
+			// Also automatically provide _HOST and _PORT derivations if not explicitly set
+			if app.Database.EnvHost == "" {
+				configMapData[app.Database.EnvAddress+"_HOST"] = hostOnly
+			}
+			if app.Database.EnvPort == "" {
+				configMapData[app.Database.EnvAddress+"_PORT"] = portOnly
+			}
 		}
 		if app.Database.EnvHost != "" {
 			configMapData[app.Database.EnvHost] = hostOnly
+			if app.Database.EnvPort == "" {
+				configMapData[app.Database.EnvHost+"_PORT"] = portOnly
+			}
 		}
 		if app.Database.EnvPort != "" {
 			configMapData[app.Database.EnvPort] = portOnly
@@ -225,6 +235,12 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 		}
 		if app.Database.EnvPassword != "" {
 			secretData[app.Database.EnvPassword] = dbPass
+			// Also alias _PASSWORD <-> _PASS
+			if strings.HasSuffix(app.Database.EnvPassword, "_PASS") {
+				secretData[app.Database.EnvPassword+"WORD"] = dbPass
+			} else if strings.HasSuffix(app.Database.EnvPassword, "_PASSWORD") {
+				secretData[strings.TrimSuffix(app.Database.EnvPassword, "WORD")] = dbPass
+			}
 		}
 
 		// Standard fallbacks for gateway backward compatibility
