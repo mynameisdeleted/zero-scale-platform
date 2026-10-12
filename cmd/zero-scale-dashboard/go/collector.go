@@ -891,42 +891,104 @@ func (c *Collector) getSystemSliceDir() string {
 }
 
 func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
-	apps := []ZeroScaleApp{
-		{
-			Host:        "bdash2.kube.fairfaxmedia.net",
-			URL:         "https://bdash2.kube.fairfaxmedia.net/",
+	knownDescriptions := map[string]string{
+		"bdash2.kube.fairfaxmedia.net":    "High-Performance CloudNativePG Builds & Parts Dashboard",
+		"bdash2.fairfaxmedia.net":         "Public Builds & Parts Dashboard Custom Domain",
+		"hopscotch.kube.fairfaxmedia.net": "Hoppscotch API Development & Testing Suite",
+		"status.kube.fairfaxmedia.net":    "Zero-Scale Platform Cluster & Nodes Dashboard",
+		"kstat.fairfaxmedia.net":          "Zero-Scale Platform Status Dashboard (kstat alias)",
+		"fdm.ffxm.cc":                     "FleetDM Device Management Zero-Scale Server",
+	}
+
+	appMap := make(map[string]ZeroScaleApp)
+
+	// 1. Seed known baseline applications
+	for h, desc := range knownDescriptions {
+		appMap[h] = ZeroScaleApp{
+			Host:        h,
+			URL:         fmt.Sprintf("https://%s/", h),
 			Type:        "elf",
-			LogsURL:     "https://bdash2.kube.fairfaxmedia.net/_logs",
-			Description: "High-Performance CloudNativePG Builds & Parts Dashboard",
-		},
-		{
-			Host:        "bdash2.fairfaxmedia.net",
-			URL:         "https://bdash2.fairfaxmedia.net/",
-			Type:        "elf",
-			LogsURL:     "https://bdash2.fairfaxmedia.net/_logs",
-			Description: "Public Builds & Parts Dashboard Custom Domain",
-		},
-		{
-			Host:        "hopscotch.kube.fairfaxmedia.net",
-			URL:         "https://hopscotch.kube.fairfaxmedia.net/",
-			Type:        "elf",
-			LogsURL:     "https://hopscotch.kube.fairfaxmedia.net/_logs",
-			Description: "Hoppscotch API Development & Testing Suite",
-		},
-		{
-			Host:        "status.kube.fairfaxmedia.net",
-			URL:         "https://status.kube.fairfaxmedia.net/",
-			Type:        "elf",
-			LogsURL:     "https://status.kube.fairfaxmedia.net/_logs",
-			Description: "Zero-Scale Platform Cluster & Nodes Dashboard",
-		},
-		{
-			Host:        "kstat.fairfaxmedia.net",
-			URL:         "https://kstat.fairfaxmedia.net/",
-			Type:        "elf",
-			LogsURL:     "https://kstat.fairfaxmedia.net/_logs",
-			Description: "Zero-Scale Platform Status Dashboard (kstat alias)",
-		},
+			LogsURL:     fmt.Sprintf("https://%s/_logs", h),
+			Description: desc,
+		}
+	}
+
+	// 2. Discover from Kubernetes ConfigMaps (zero-scale-app=true)
+	for _, path := range []string{
+		"/api/v1/namespaces/default/configmaps?labelSelector=zero-scale-app=true",
+		"/api/v1/configmaps?labelSelector=zero-scale-app=true",
+	} {
+		if cmBytes, err := c.k8sGet(path); err == nil {
+			var cmList struct {
+				Items []struct {
+					Metadata struct {
+						Name string `json:"name"`
+					} `json:"metadata"`
+					Data map[string]string `json:"data"`
+				} `json:"items"`
+			}
+			if err := json.Unmarshal(cmBytes, &cmList); err == nil {
+				for _, item := range cmList.Items {
+					h := strings.TrimSpace(item.Data["host"])
+					if h != "" {
+						appType := item.Data["type"]
+						if appType == "" {
+							appType = "elf"
+						}
+						desc := knownDescriptions[h]
+						if desc == "" {
+							desc = fmt.Sprintf("Zero-Scale Application: %s", h)
+						}
+						appMap[h] = ZeroScaleApp{
+							Host:        h,
+							URL:         fmt.Sprintf("https://%s/", h),
+							Type:        appType,
+							LogsURL:     fmt.Sprintf("https://%s/_logs", h),
+							Description: desc,
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Discover from /opt/apps directory (symlinks and binaries)
+	if entries, err := os.ReadDir(c.appsDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if strings.Contains(name, ".") && !strings.HasSuffix(name, ".type") && !strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".bak") {
+				if _, exists := appMap[name]; !exists {
+					appType := "elf"
+					typePath := filepath.Join(c.appsDir, name+".type")
+					if tBytes, err := os.ReadFile(typePath); err == nil {
+						appType = strings.TrimSpace(string(tBytes))
+					}
+					desc := knownDescriptions[name]
+					if desc == "" {
+						desc = fmt.Sprintf("Zero-Scale Application: %s", name)
+					}
+					appMap[name] = ZeroScaleApp{
+						Host:        name,
+						URL:         fmt.Sprintf("https://%s/", name),
+						Type:        appType,
+						LogsURL:     fmt.Sprintf("https://%s/_logs", name),
+						Description: desc,
+					}
+				}
+			}
+		}
+	}
+
+	// Build sorted slice
+	var hosts []string
+	for h := range appMap {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+
+	var apps []ZeroScaleApp
+	for _, h := range hosts {
+		apps = append(apps, appMap[h])
 	}
 
 	now := time.Now()
@@ -1008,49 +1070,119 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 }
 
 func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
-	_ = raw
-	categories := map[string][]SiteLink{
-		"Core & Infrastructure": {
-			{
-				Name:        "Git Server (Gitea)",
-				Host:        "git.fairfaxmedia.net",
-				URL:         "https://git.fairfaxmedia.net/",
-				Namespace:   "default",
-				Category:    "Core & Infrastructure",
-				Icon:        "📂",
-				Description: "Internal Git repository server hosting open-cream-cheese and zero-scale-platform",
-			},
-			{
-				Name:        "Kubernetes Dashboard",
-				Host:        "kube.fairfaxmedia.net",
-				URL:         "https://kube.fairfaxmedia.net/",
-				Namespace:   "kube-system",
-				Category:    "Core & Infrastructure",
-				Icon:        "☸️",
-				Description: "Full cluster management UI, workloads, secrets, storage, and web shell",
-			},
-			{
-				Name:        "Prometheus Monitoring",
-				Host:        "prom-serv.kube.fairfaxmedia.net",
-				URL:         "https://prom-serv.kube.fairfaxmedia.net/",
-				Namespace:   "default",
-				Category:    "Core & Infrastructure",
-				Icon:        "📈",
-				Description: "Cluster metrics server, alerts, targets, and time-series graphing",
-			},
-			{
-				Name:        "Temporal Workflow Orchestrator",
-				Host:        "temporal.ffxm.cc",
-				URL:         "https://temporal.ffxm.cc/",
-				Namespace:   "temporal",
-				Category:    "Core & Infrastructure",
-				Icon:        "⏳",
-				Description: "Durable workflow execution engine and management web UI",
-			},
+	categories := make(map[string][]SiteLink)
+
+	// Baseline infrastructure sites
+	baseline := []SiteLink{
+		{
+			Name:        "Git Server (Gitea)",
+			Host:        "git.fairfaxmedia.net",
+			URL:         "https://git.fairfaxmedia.net/",
+			Namespace:   "default",
+			Category:    "Core & Infrastructure",
+			Icon:        "📂",
+			Description: "Internal Git repository server hosting open-cream-cheese and zero-scale-platform",
+		},
+		{
+			Name:        "Kubernetes Dashboard",
+			Host:        "kube.fairfaxmedia.net",
+			URL:         "https://kube.fairfaxmedia.net/",
+			Namespace:   "kube-system",
+			Category:    "Core & Infrastructure",
+			Icon:        "☸️",
+			Description: "Full cluster management UI, workloads, secrets, storage, and web shell",
+		},
+		{
+			Name:        "Prometheus Monitoring",
+			Host:        "prom-serv.kube.fairfaxmedia.net",
+			URL:         "https://prom-serv.kube.fairfaxmedia.net/",
+			Namespace:   "default",
+			Category:    "Core & Infrastructure",
+			Icon:        "📈",
+			Description: "Cluster metrics server, alerts, targets, and time-series graphing",
+		},
+		{
+			Name:        "Temporal Workflow Orchestrator",
+			Host:        "temporal.ffxm.cc",
+			URL:         "https://temporal.ffxm.cc/",
+			Namespace:   "temporal",
+			Category:    "Core & Infrastructure",
+			Icon:        "⏳",
+			Description: "Durable workflow execution engine and management web UI",
 		},
 	}
+	seenHosts := make(map[string]bool)
+	for _, b := range baseline {
+		categories[b.Category] = append(categories[b.Category], b)
+		seenHosts[b.Host] = true
+	}
 
-	order := []string{"Core & Infrastructure"}
+	// Parse dynamic Ingress resources from Kubernetes API
+	if len(raw) > 0 {
+		var ingList struct {
+			Items []struct {
+				Metadata struct {
+					Name      string            `json:"name"`
+					Namespace string            `json:"namespace"`
+					Labels    map[string]string `json:"labels"`
+				} `json:"metadata"`
+				Spec struct {
+					Rules []struct {
+						Host string `json:"host"`
+					} `json:"rules"`
+				} `json:"spec"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(raw, &ingList); err == nil {
+			for _, ing := range ingList.Items {
+				for _, r := range ing.Spec.Rules {
+					h := strings.TrimSpace(r.Host)
+					if h == "" || seenHosts[h] {
+						continue
+					}
+					seenHosts[h] = true
+
+					cat := "Cluster Services"
+					icon := "🌐"
+					desc := fmt.Sprintf("Public service in namespace %s", ing.Metadata.Namespace)
+
+					if strings.Contains(h, "fdm") || strings.Contains(h, "fleet") {
+						cat = "Zero-Scale Services"
+						icon = "⚡"
+						desc = "FleetDM Device Management Platform"
+					} else if strings.Contains(h, "bdash") {
+						cat = "Zero-Scale Services"
+						icon = "⚡"
+						desc = "Builds & Parts Database Dashboard"
+					} else if strings.Contains(h, "hopscotch") {
+						cat = "Zero-Scale Services"
+						icon = "⚡"
+						desc = "API Development & Testing Suite"
+					} else if strings.Contains(h, "status") || strings.Contains(h, "kstat") {
+						cat = "Zero-Scale Services"
+						icon = "⚡"
+						desc = "Zero-Scale Platform Monitoring"
+					} else if ing.Metadata.Labels["zero-scale-app"] == "true" || strings.HasPrefix(ing.Metadata.Name, "zero-scale-") {
+						cat = "Zero-Scale Services"
+						icon = "⚡"
+						desc = "Serverless Zero-Scale Application"
+					}
+
+					categories[cat] = append(categories[cat], SiteLink{
+						Name:        h,
+						Host:        h,
+						URL:         fmt.Sprintf("https://%s/", h),
+						Namespace:   ing.Metadata.Namespace,
+						Category:    cat,
+						Icon:        icon,
+						Description: desc,
+					})
+				}
+			}
+		}
+	}
+
+	order := []string{"Core & Infrastructure", "Zero-Scale Services", "Cluster Services"}
 	var result []SiteGroup
 	for _, cat := range order {
 		if len(categories[cat]) > 0 {
