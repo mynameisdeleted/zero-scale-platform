@@ -59,12 +59,30 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		}
 	}
 
+	// Fetch dynamic app ConfigMap and Secret from Kubernetes API
+	shortName := strings.Split(host, ".")[0]
+	appCMName := "zero-scale-app-" + shortName
+	var appArgs string
+	appData, _ := FetchK8sResource("configmaps", appCMName, cfg.KubeNamespace)
+	if appData != nil {
+		appArgs = appData["args"]
+	}
+
 	baseArgs := []string{
 		fmt.Sprintf("--unit=%s", unitName),
-		"-p", "DynamicUser=yes",
 		"-p", "PrivateTmp=yes",
-		"-p", "ProtectSystem=strict",
 		fmt.Sprintf("--setenv=PORT=%d", port),
+	}
+
+	// Dynamic user configuration (default: DynamicUser=yes, can be disabled via dynamic-user=false or user=<user>)
+	if appData != nil && (appData["dynamic-user"] == "false" || appData["dynamic_user"] == "false") {
+		if u := appData["user"]; u != "" {
+			baseArgs = append(baseArgs, "-p", "User="+u)
+		}
+	} else if appData != nil && appData["user"] != "" {
+		baseArgs = append(baseArgs, "-p", "User="+appData["user"])
+	} else {
+		baseArgs = append(baseArgs, "-p", "DynamicUser=yes", "-p", "ProtectSystem=strict")
 	}
 
 	// Mount persistent volume if present
@@ -83,18 +101,19 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		}
 	}
 
-	// Fetch dynamic app ConfigMap and Secret from Kubernetes API
-	shortName := strings.Split(host, ".")[0]
-	appCMName := "zero-scale-app-" + shortName
-	if appData, err := FetchK8sResource("configmaps", appCMName, cfg.KubeNamespace); err == nil {
+	if appData != nil {
 		for k, v := range appData {
-			if k != "host" && k != "url" && k != "type" && k != "mounts" && k != "scale-to-zero" && k != "database_configmap" && k != "database_secret" {
+			if k != "host" && k != "url" && k != "type" && k != "mounts" && k != "scale-to-zero" && k != "database_configmap" && k != "database_secret" && k != "args" && k != "dynamic-user" && k != "dynamic_user" && k != "user" {
+				v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
+				v = strings.ReplaceAll(v, "${HOST}", host)
 				baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 			}
 		}
 		if dbCM := appData["database_configmap"]; dbCM != "" {
 			if cmData, err := FetchK8sResource("configmaps", dbCM, cfg.KubeNamespace); err == nil {
 				for k, v := range cmData {
+					v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
+					v = strings.ReplaceAll(v, "${HOST}", host)
 					baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 				}
 			}
@@ -120,7 +139,17 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		log.Printf("Executing WASM runner: /usr/bin/systemd-run %s", strings.Join(args, " "))
 		cmd = exec.Command("systemd-run", args...)
 	} else {
-		args := append(baseArgs, binaryPath, "-port", strconv.Itoa(port))
+		execArgs := []string{binaryPath}
+		if appArgs != "" {
+			for _, arg := range strings.Fields(appArgs) {
+				arg = strings.ReplaceAll(arg, "${PORT}", strconv.Itoa(port))
+				arg = strings.ReplaceAll(arg, "${HOST}", host)
+				execArgs = append(execArgs, arg)
+			}
+		} else {
+			execArgs = append(execArgs, "-port", strconv.Itoa(port))
+		}
+		args := append(baseArgs, execArgs...)
 		log.Printf("Executing: /usr/bin/systemd-run %s", strings.Join(args, " "))
 		cmd = exec.Command("systemd-run", args...)
 	}

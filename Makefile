@@ -12,7 +12,7 @@ all: build
 # -------------------------------------------------------------
 # Compilation Targets
 # -------------------------------------------------------------
-build: build-gateway build-mock build-dashboard
+build: build-gateway build-mock build-dashboard build-ctl
 	@echo "==> All binaries built successfully."
 
 build-gateway:
@@ -22,6 +22,10 @@ build-gateway:
 build-mock:
 	@echo "==> Building mock-app..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o mock-app ./cmd/mock-app
+
+build-ctl:
+	@echo "==> Building zero-scale-ctl..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o zero-scale-ctl ./cmd/zero-scale-ctl
 
 build-static:
 	@echo "==> Building minified dashboard static assets..."
@@ -167,4 +171,4 @@ status:
 	fi
 
 clean:
-	rm -f gateway mock-app zero-scale-dashboard status-dashboard
+	rm -f gateway mock-app zero-scale-dashboard status-dashboard zero-scale-ctl
