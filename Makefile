@@ -2,10 +2,12 @@ IMAGE ?= localhost:32000/systemd-runner:latest
 NAMESPACE ?= default
 GATEWAY_APP ?= zero-scale-gateway
 APPS_DIR ?= /opt/apps
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
 
 .PHONY: all build build-gateway build-dashboard build-static build-mock \
         deploy deploy-manifests deploy-dashboard build-and-deploy \
-        image push restart full-deploy ship verify status clean
+        image push restart full-deploy ship verify status clean install uninstall
 
 all: build
 
@@ -172,3 +174,18 @@ status:
 
 clean:
 	rm -f gateway mock-app zero-scale-dashboard status-dashboard zero-scale-ctl
+
+# -------------------------------------------------------------
+# Local Installation
+# -------------------------------------------------------------
+install: build-ctl
+	@echo "==> Installing zero-scale-ctl to $(BINDIR)..."
+	@mkdir -p $(BINDIR)
+	install -m 755 zero-scale-ctl $(BINDIR)/zero-scale-ctl
+	@echo "✅ Installed: $(BINDIR)/zero-scale-ctl"
+	@echo "Run 'zero-scale-ctl help' to verify."
+
+uninstall:
+	@echo "==> Removing zero-scale-ctl from $(BINDIR)..."
+	rm -f $(BINDIR)/zero-scale-ctl
+	@echo "✅ Uninstalled $(BINDIR)/zero-scale-ctl"
