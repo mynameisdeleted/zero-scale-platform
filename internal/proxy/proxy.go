@@ -23,6 +23,7 @@ type Gateway struct {
 	cfg            *config.Config
 	allocatedPorts map[string]int
 	lastActive     map[string]time.Time
+	inFlight       map[string]int
 	mu             sync.Mutex
 }
 
@@ -32,6 +33,7 @@ func New(cfg *config.Config) *Gateway {
 		cfg:            cfg,
 		allocatedPorts: make(map[string]int),
 		lastActive:     make(map[string]time.Time),
+		inFlight:       make(map[string]int),
 	}
 }
 
@@ -53,12 +55,18 @@ func (g *Gateway) GetLastActiveMap() map[string]time.Time {
 	return cp
 }
 
-// StopService deallocates port and stops the dynamic unit
+// StopService deallocates port and stops the dynamic unit if no requests in flight
 func (g *Gateway) StopService(host string) error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	if g.inFlight[host] > 0 {
+		// Do not kill service while active HTTP requests are being processed
+		g.lastActive[host] = time.Now()
+		g.mu.Unlock()
+		return nil
+	}
 	delete(g.allocatedPorts, host)
 	delete(g.lastActive, host)
+	g.mu.Unlock()
 	return runner.StopService(host)
 }
 
@@ -200,5 +208,21 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = g.StopService(host)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
+
+	g.mu.Lock()
+	g.inFlight[host]++
+	g.lastActive[host] = time.Now()
+	g.mu.Unlock()
+
+	defer func() {
+		g.mu.Lock()
+		g.inFlight[host]--
+		if g.inFlight[host] < 0 {
+			g.inFlight[host] = 0
+		}
+		g.lastActive[host] = time.Now()
+		g.mu.Unlock()
+	}()
+
 	proxy.ServeHTTP(w, r)
 }

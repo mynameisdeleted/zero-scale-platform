@@ -48,9 +48,22 @@ func (r *Reaper) Start() {
 				}
 			}
 
-			if now.Sub(lastTime) > r.cfg.IdleTimeout {
+			timeout := r.cfg.IdleTimeout
+			appData, err := runner.GetAppConfig(host, r.cfg.KubeNamespace)
+			if err == nil && appData != nil {
+				if appData["scale-to-zero"] == "false" {
+					continue // never scale to zero
+				}
+				if customTimeout := appData["idle-timeout"]; customTimeout != "" {
+					if d, err := time.ParseDuration(customTimeout); err == nil && d > 0 {
+						timeout = d
+					}
+				}
+			}
+
+			if now.Sub(lastTime) > timeout {
 				unitName := fmt.Sprintf("app-%s", host)
-				banner.PrintScaleToZero(host, r.cfg.IdleTimeout)
+				banner.PrintScaleToZero(host, timeout)
 				if err := r.stopFunc(host); err != nil {
 					log.Printf("Failed to stop idle unit %s: %v", unitName, err)
 				}
@@ -63,9 +76,21 @@ func (r *Reaper) Start() {
 				continue
 			}
 			unitName := fmt.Sprintf("app-%s", host)
-			active, err := runner.IsServiceActive(unitName)
-			if err == nil && active && now.Sub(lastTime) > r.cfg.IdleTimeout {
-				banner.PrintScaleToZero(host, r.cfg.IdleTimeout)
+			timeout := r.cfg.IdleTimeout
+			appData, err := runner.GetAppConfig(host, r.cfg.KubeNamespace)
+			if err == nil && appData != nil {
+				if appData["scale-to-zero"] == "false" {
+					continue
+				}
+				if customTimeout := appData["idle-timeout"]; customTimeout != "" {
+					if d, err := time.ParseDuration(customTimeout); err == nil && d > 0 {
+						timeout = d
+					}
+				}
+			}
+			active, errActive := runner.IsServiceActive(unitName)
+			if errActive == nil && active && now.Sub(lastTime) > timeout {
+				banner.PrintScaleToZero(host, timeout)
 				if err := r.stopFunc(host); err != nil {
 					log.Printf("Failed to stop idle unit %s: %v", unitName, err)
 				}

@@ -37,6 +37,7 @@ type AppConfig struct {
 	Redis       *RedisConfig
 	Mounts      string
 	ScaleToZero bool
+	IdleTimeout string            // e.g. "60s", "5m" (optional custom idle timeout)
 
 	// Process execution & launcher configuration
 	Args        string            // CLI arguments or subcommand (e.g. "serve")
@@ -134,6 +135,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		launcherLines  []string
 		mounts         string
 		scaleToZero    = true
+		idleTimeout    string
 		configFiles    []string
 		currentSection = ""
 		currentList    = ""
@@ -265,6 +267,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 					mounts = v
 				case "scale_to_zero":
 					scaleToZero = strings.ToLower(v) != "false"
+				case "idle_timeout", "idle-timeout", "timeout":
+					idleTimeout = v
 				case "config_file", "config":
 					configFiles = append(configFiles, v)
 				case "config_files", "configs":
@@ -369,6 +373,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		Redis:       redisCfg,
 		Mounts:      mounts,
 		ScaleToZero: scaleToZero,
+		IdleTimeout: idleTimeout,
 		Args:        args,
 		InitCmd:     initCmd,
 		PreStart:    initCmd,

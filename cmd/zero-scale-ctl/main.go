@@ -299,6 +299,9 @@ func handleApply(configPath, expandPath, namespace string) error {
 	if !app.ScaleToZero {
 		cmData["scale-to-zero"] = "false"
 	}
+	if app.IdleTimeout != "" {
+		cmData["idle-timeout"] = app.IdleTimeout
+	}
 	if app.Database != nil {
 		cmData["database_configmap"] = app.ConfigMapName()
 		cmData["database_secret"] = app.SecretName()

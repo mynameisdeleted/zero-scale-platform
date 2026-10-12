@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Configure IPv4 preference for outbound DNS resolution (prevents IPv6 blackhole timeouts)
+RUN echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf
+
 # Install wasmtime WASI WebAssembly runtime
 RUN curl -L https://github.com/bytecodealliance/wasmtime/releases/download/v23.0.2/wasmtime-v23.0.2-x86_64-linux.tar.xz | tar -xJ -C /usr/local/bin --strip-components=1 wasmtime-v23.0.2-x86_64-linux/wasmtime
 

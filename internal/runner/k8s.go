@@ -173,3 +173,10 @@ func VerifyKubeToken(token, namespace string) (bool, string, error) {
 
 	return res.Status.Allowed, res.Status.Reason, nil
 }
+
+// GetAppConfig retrieves the zero-scale-app-<shortName> ConfigMap data for a host
+func GetAppConfig(host, namespace string) (map[string]string, error) {
+	shortName := strings.Split(host, ".")[0]
+	appCMName := "zero-scale-app-" + shortName
+	return FetchK8sResource("configmaps", appCMName, namespace)
+}
