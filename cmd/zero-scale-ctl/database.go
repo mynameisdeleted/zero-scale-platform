@@ -288,35 +288,74 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 		}
 	}
 
-	// Managed secrets: check existing Secret in Kubernetes to preserve existing values,
-	// or auto-generate if requested and missing.
+	// Managed secrets: check cross-service references (e.g. fdm.FLEET_SERVER_PRIVATE_KEY),
+	// existing Secret in Kubernetes to preserve existing values, or auto-generate/prompt if missing.
 	if len(app.Secrets) > 0 {
 		existingSecret, _ := GetSecretData(app.SecretName(), namespace)
 		for k, genRule := range app.Secrets {
 			rule := strings.TrimSpace(genRule)
-			if existingVal, exists := existingSecret[k]; exists && existingVal != "" {
-				// Preserve existing value across applies
-				secretData[k] = existingVal
-			} else {
-				switch strings.ToLower(rule) {
-				case "generate", "generate_base64_32", "base64", "base64_32":
-					val, err := GenerateRandomBase64(32)
-					if err != nil {
-						return fmt.Errorf("failed generating random secret for '%s': %w", k, err)
+
+			// 1. Cross-service reference: <service>.<KEY> (e.g. fdm.FLEET_SERVER_PRIVATE_KEY)
+			if strings.Contains(rule, ".") && !strings.Contains(rule, " ") && !strings.HasPrefix(rule, "http") {
+				parts := strings.SplitN(rule, ".", 2)
+				refApp := strings.ToLower(strings.TrimSpace(parts[0]))
+				refKey := strings.TrimSpace(parts[1])
+				if refApp != "" && refKey != "" {
+					var resolvedVal string
+					if refSec, err := GetSecretData(fmt.Sprintf("%s-db-secret", refApp), namespace); err == nil && refSec[refKey] != "" {
+						resolvedVal = refSec[refKey]
+					} else if refCM, err := GetConfigMapData(fmt.Sprintf("%s-db-config", refApp), namespace); err == nil && refCM[refKey] != "" {
+						resolvedVal = refCM[refKey]
+					} else if refAppCM, err := GetConfigMapData(fmt.Sprintf("zero-scale-app-%s", refApp), namespace); err == nil && refAppCM[refKey] != "" {
+						resolvedVal = refAppCM[refKey]
 					}
-					secretData[k] = val
-					fmt.Printf("--> Generated new 32-byte base64 secret for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
-				case "password", "generate_password", "generate_password_24":
-					val := GeneratePassword(24)
-					secretData[k] = val
-					fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
-				case "generate_password_32":
-					val := GeneratePassword(32)
-					secretData[k] = val
-					fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
-				default:
-					secretData[k] = rule
+					if resolvedVal == "" {
+						return fmt.Errorf("failed to resolve secret '%s' from reference '%s': key '%s' not found in service '%s' secrets/configmaps in namespace '%s'",
+							k, rule, refKey, refApp, namespace)
+					}
+					secretData[k] = resolvedVal
+					fmt.Printf("--> Resolved secret '%s' from zero-scale service '%s' (%s).\n", k, refApp, rule)
+					continue
 				}
+			}
+
+			// 2. Preserve existing value if already present in Kubernetes Secret (or migrating from app ConfigMap)
+			if existingVal, exists := existingSecret[k]; exists && existingVal != "" {
+				secretData[k] = existingVal
+				continue
+			}
+			if existingAppCM, err := GetConfigMapData(fmt.Sprintf("zero-scale-app-%s", app.AppName()), namespace); err == nil {
+				if existingVal := existingAppCM[k]; existingVal != "" && existingVal != "generate" {
+					secretData[k] = existingVal
+					continue
+				}
+			}
+
+			// 3. Generate or prompt for new secret
+			switch strings.ToLower(rule) {
+			case "generate", "generate_base64_32", "base64", "base64_32":
+				val, err := GenerateRandomBase64(32)
+				if err != nil {
+					return fmt.Errorf("failed generating random secret for '%s': %w", k, err)
+				}
+				secretData[k] = val
+				fmt.Printf("--> Generated new 32-byte base64 secret for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+			case "password", "generate_password", "generate_password_24":
+				val := GeneratePassword(24)
+				secretData[k] = val
+				fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+			case "generate_password_32":
+				val := GeneratePassword(32)
+				secretData[k] = val
+				fmt.Printf("--> Generated new random password for '%s' in Kubernetes Secret '%s'.\n", k, app.SecretName())
+			case "ask", "prompt":
+				val, err := readSecretLine(fmt.Sprintf("Enter secret value for '%s' (hidden): ", k))
+				if err != nil || val == "" {
+					return fmt.Errorf("secret '%s' is required", k)
+				}
+				secretData[k] = val
+			default:
+				secretData[k] = rule
 			}
 		}
 	}

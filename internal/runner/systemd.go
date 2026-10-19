@@ -102,12 +102,23 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 	}
 
 	if appData != nil {
+		// Set of internal platform configuration keys that should never be passed as process environment variables
+		ignoredKeys := map[string]bool{
+			"host": true, "url": true, "type": true, "mounts": true,
+			"scale-to-zero": true, "scale_to_zero": true,
+			"idle-timeout": true, "idle_timeout": true,
+			"database_configmap": true, "database_secret": true,
+			"args": true, "user": true,
+			"dynamic-user": true, "dynamic_user": true,
+		}
+
 		for k, v := range appData {
-			if k != "host" && k != "url" && k != "type" && k != "mounts" && k != "scale-to-zero" && k != "database_configmap" && k != "database_secret" && k != "args" && k != "dynamic-user" && k != "dynamic_user" && k != "user" {
-				v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
-				v = strings.ReplaceAll(v, "${HOST}", host)
-				baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
+			if ignoredKeys[k] || strings.Contains(k, "-") {
+				continue
 			}
+			v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
+			v = strings.ReplaceAll(v, "${HOST}", host)
+			baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 		}
 		if dbCM := appData["database_configmap"]; dbCM != "" {
 			if cmData, err := FetchK8sResource("configmaps", dbCM, cfg.KubeNamespace); err == nil {

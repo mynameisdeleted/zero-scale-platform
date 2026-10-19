@@ -29,12 +29,20 @@ type RedisConfig struct {
 	EnvPort    string
 }
 
+// GatewayConfig holds ingress-nginx / gateway level settings such as shared OAuth2 setup.
+type GatewayConfig struct {
+	OAuthSetup string // Name of shared oauth-setup profile (e.g. "mdm")
+	OAuthURL   string // OIDC/OAuth2 provider base URL (e.g. "https://git.fairfaxmedia.net")
+	OAuthGroup string // Required Gitea group(s)/organization(s) (e.g. "open-cream-cheese")
+}
+
 // AppConfig represents an application configuration.
 type AppConfig struct {
 	Hostnames   []string
 	BinaryPath  string
 	Database    *DatabaseConfig
 	Redis       *RedisConfig
+	Gateway     *GatewayConfig
 	Mounts      string
 	ScaleToZero bool
 	IdleTimeout string            // e.g. "60s", "5m" (optional custom idle timeout)
@@ -109,6 +117,20 @@ func (a *AppConfig) ConfigMapName() string {
 	return fmt.Sprintf("%s-db-config", a.AppName())
 }
 
+// OAuthSetupName returns the resolved shared oauth-setup profile name if OAuth is configured in gateway, or "".
+func (a *AppConfig) OAuthSetupName() string {
+	if a.Gateway == nil {
+		return ""
+	}
+	if a.Gateway.OAuthSetup != "" {
+		return strings.ToLower(strings.TrimSpace(a.Gateway.OAuthSetup))
+	}
+	if a.Gateway.OAuthURL != "" {
+		return a.AppName()
+	}
+	return ""
+}
+
 // NeedsLauncher returns true if the application requires a custom launcher script
 // rather than a direct binary symlink.
 func (a *AppConfig) NeedsLauncher() bool {
@@ -142,8 +164,9 @@ func LoadConfig(filePath string) (interface{}, error) {
 		currentSection = ""
 		currentList    = ""
 
-		dbCfg    *DatabaseConfig
-		redisCfg *RedisConfig
+		dbCfg      *DatabaseConfig
+		redisCfg   *RedisConfig
+		gatewayCfg *GatewayConfig
 	)
 
 	scanner := bufio.NewScanner(file)
@@ -196,7 +219,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 			continue
 		}
 
-		// Section headers (e.g. "database:", "redis:", "env:", "launcher:")
+		// Section headers (e.g. "database:", "redis:", "gateway:", "env:", "launcher:")
 		if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed[:len(trimmed)-1], ":") {
 			key := strings.TrimSuffix(trimmed, ":")
 			currentSection = key
@@ -205,6 +228,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 				dbCfg = &DatabaseConfig{Engine: "mysql"}
 			} else if key == "redis" && redisCfg == nil {
 				redisCfg = &RedisConfig{}
+			} else if key == "gateway" && gatewayCfg == nil {
+				gatewayCfg = &GatewayConfig{}
 			}
 			continue
 		}
@@ -245,6 +270,15 @@ func LoadConfig(filePath string) (interface{}, error) {
 					redisCfg.EnvHost = v
 				case "env_port":
 					redisCfg.EnvPort = v
+				}
+			} else if currentSection == "gateway" && gatewayCfg != nil {
+				switch k {
+				case "oauth_setup", "auth_setup", "setup", "oauth_name", "oauth_app":
+					gatewayCfg.OAuthSetup = v
+				case "oauth", "oauth_url", "oauth_issuer", "oauth_provider_url":
+					gatewayCfg.OAuthURL = strings.TrimRight(v, "/")
+				case "oauth_group", "oauth_groups", "allowed_group", "allowed_groups", "group", "groups":
+					gatewayCfg.OAuthGroup = v
 				}
 			} else if currentSection == "env" {
 				envVars[k] = v
@@ -382,6 +416,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 		BinaryPath:  binaryPath,
 		Database:    dbCfg,
 		Redis:       redisCfg,
+		Gateway:     gatewayCfg,
 		Mounts:      mounts,
 		ScaleToZero: scaleToZero,
 		IdleTimeout: idleTimeout,

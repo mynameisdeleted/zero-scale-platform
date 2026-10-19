@@ -17,6 +17,7 @@ Usage:
 
 Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
+  oauth-setup <name> Create or update a shared ingress-nginx OAuth2 setup profile
   status <host>      Inspect systemd service status of an app
   logs <host>        Fetch journalctl logs for an app unit
   list-apps          List all registered zero-scale applications
@@ -31,6 +32,7 @@ Options for apply:
 
 Examples:
   zero-scale-ctl apply -f ./fleetdm.conf
+  zero-scale-ctl oauth-setup mdm --url https://git.fairfaxmedia.net --group open-cream-cheese
   zero-scale-ctl apply -f ./redirect.conf
   zero-scale-ctl status fdm.ffxm.cc
   zero-scale-ctl logs fdm.ffxm.cc -n 50`)
@@ -83,10 +85,10 @@ func main() {
 
 	case "status":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl status <host>")
+			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl status <host-or-app>")
 			os.Exit(1)
 		}
-		host := os.Args[2]
+		host := resolveAppHost(os.Args[2], namespace)
 		pod, err := GetGatewayPod(namespace)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -101,10 +103,10 @@ func main() {
 
 	case "logs":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl logs <host> [-n <lines>]")
+			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl logs <host-or-app> [-n <lines>]")
 			os.Exit(1)
 		}
-		host := os.Args[2]
+		host := resolveAppHost(os.Args[2], namespace)
 		lines := "50"
 		if len(os.Args) >= 5 && (os.Args[3] == "-n" || os.Args[3] == "--lines") {
 			lines = os.Args[4]
@@ -207,6 +209,33 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("==> Database provisioned for '%s' on engine '%s'.\n", *appFlag, *engineFlag)
+
+	case "oauth-setup", "auth-setup":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl oauth-setup <name> --url <oauth-url> [--group <group>] [--host <host>]")
+			os.Exit(1)
+		}
+		setupName := os.Args[2]
+		oauthFlags := flag.NewFlagSet("oauth-setup", flag.ExitOnError)
+		urlFlag := oauthFlags.String("url", "", "OAuth2 / OIDC provider base URL (e.g. https://git.fairfaxmedia.net)")
+		groupFlag := oauthFlags.String("group", "", "Allowed Gitea group(s)/org(s) (comma-separated)")
+		hostFlag := oauthFlags.String("host", "", "Optional application hostname(s) to register Redirect URI for")
+		nsFlag := oauthFlags.String("n", namespace, "Target namespace")
+		_ = oauthFlags.Parse(os.Args[3:])
+
+		var hosts []string
+		if *hostFlag != "" {
+			for _, h := range strings.Split(*hostFlag, ",") {
+				if strings.TrimSpace(h) != "" {
+					hosts = append(hosts, strings.TrimSpace(h))
+				}
+			}
+		}
+		if err := ReconcileOAuthSetup(setupName, *urlFlag, *groupFlag, hosts, *nsFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Shared OAuth2 setup '%s' configured and deployed!\n", setupName)
 
 	case "--help", "-h", "help":
 		usage()
@@ -320,6 +349,9 @@ func handleApply(configPath, expandPath, namespace string) error {
 	if app.User != "" {
 		cmData["user"] = app.User
 	}
+	if oauthSetup := app.OAuthSetupName(); oauthSetup != "" {
+		cmData["oauth-setup"] = oauthSetup
+	}
 	for k, v := range app.Env {
 		cmData[k] = v
 	}
@@ -371,18 +403,31 @@ func handleApply(configPath, expandPath, namespace string) error {
 		}
 	}
 
-	err = CreateOrUpdateConfigMap(fmt.Sprintf("zero-scale-app-%s", app.AppName()), namespace, cmData, map[string]string{
+	appLabels := map[string]string{
 		"zero-scale-app": "true",
 		"app":            app.AppName(),
-	})
+	}
+	if oauthSetup := app.OAuthSetupName(); oauthSetup != "" {
+		appLabels["zero-scale-oauth-setup"] = oauthSetup
+	}
+	err = CreateOrUpdateConfigMap(fmt.Sprintf("zero-scale-app-%s", app.AppName()), namespace, cmData, appLabels)
 	if err != nil {
 		return fmt.Errorf("failed to register app configmap: %w", err)
+	}
+
+	// Step C.5: Reconcile shared ingress-nginx OAuth2 setup if configured in gateway section
+	oauthSetup := app.OAuthSetupName()
+	if oauthSetup != "" {
+		fmt.Printf("--> Step 3.5: Reconciling shared ingress-nginx OAuth2 setup '%s'...\n", oauthSetup)
+		if err := ReconcileOAuthSetup(oauthSetup, app.Gateway.OAuthURL, app.Gateway.OAuthGroup, app.Hostnames, namespace); err != nil {
+			return fmt.Errorf("oauth-setup reconciliation failed: %w", err)
+		}
 	}
 
 	// Step D: Configure public Ingress for all hostnames
 	fmt.Printf("--> Step 4: Configuring public Ingress for %v...\n", app.Hostnames)
 	ingressName := fmt.Sprintf("zero-scale-%s", app.AppName())
-	err = ApplyIngress(ingressName, namespace, "zero-scale-gateway", 80, app.Hostnames)
+	err = ApplyIngress(ingressName, namespace, "zero-scale-gateway", 80, app.Hostnames, oauthSetup)
 	if err != nil {
 		return fmt.Errorf("failed to apply ingress: %w", err)
 	}
@@ -418,6 +463,23 @@ data:
 	for _, sec := range app.SecondaryHosts() {
 		fmt.Printf("🔗 Secondary Endpoint: https://%s\n", sec)
 	}
+	if oauthSetup != "" {
+		fmt.Printf("🔐 Protected by shared OAuth2 setup: '%s' (%s)\n", oauthSetup, app.Gateway.OAuthURL)
+	}
 	fmt.Println("==============================================================================")
 	return nil
 }
+
+func resolveAppHost(hostOrApp, namespace string) string {
+	hostOrApp = strings.TrimSpace(hostOrApp)
+	if strings.Contains(hostOrApp, ".") {
+		return hostOrApp
+	}
+	if cm, err := GetConfigMapData(fmt.Sprintf("zero-scale-app-%s", hostOrApp), namespace); err == nil {
+		if h := strings.TrimSpace(cm["host"]); h != "" {
+			return h
+		}
+	}
+	return hostOrApp
+}
+

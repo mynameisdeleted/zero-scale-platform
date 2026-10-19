@@ -134,8 +134,9 @@ func CreateOrUpdateConfigMap(name, namespace string, data map[string]string, lab
 	return ApplyYAML(b.String(), namespace)
 }
 
-// ApplyIngress creates or updates an Ingress for a set of hosts routing to serviceName.
-func ApplyIngress(name, namespace, serviceName string, servicePort int, hosts []string) error {
+// ApplyIngress creates or updates an Ingress for a set of hosts routing to serviceName,
+// optionally configuring ingress-nginx external OAuth2 authentication via oauthSetupName.
+func ApplyIngress(name, namespace, serviceName string, servicePort int, hosts []string, oauthSetupName string) error {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -144,20 +145,32 @@ metadata:
   namespace: %s
   labels:
     app: %s
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+`, name, namespace, serviceName))
+	if oauthSetupName != "" {
+		b.WriteString(fmt.Sprintf("    zero-scale-oauth-setup: %q\n", oauthSetupName))
+	}
+	b.WriteString(`  annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-spec:
+`)
+	if oauthSetupName != "" {
+		proxySvc := OAuthProxyServiceName(oauthSetupName)
+		b.WriteString(fmt.Sprintf(`    nginx.ingress.kubernetes.io/auth-url: "http://%s.%s.svc.cluster.local:4180/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,X-Auth-Request-Preferred-Username"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+`, proxySvc, namespace))
+	}
+	b.WriteString(`spec:
   ingressClassName: public
   rules:
-`, name, namespace, serviceName))
+`)
 	for _, host := range hosts {
 		b.WriteString(fmt.Sprintf(`  - host: %s
     http:
       paths:
       - path: /
-        pathType: ImplementationSpecific
+        pathType: Prefix
         backend:
           service:
             name: %s

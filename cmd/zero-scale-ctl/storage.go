@@ -1,11 +1,27 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+func fileSHA256(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // DeployBinary ensures local binary is uploaded to gateway pod /opt/apps/ and symlinks are configured.
 func DeployBinary(app *AppConfig, namespace string) error {
@@ -21,12 +37,13 @@ func DeployBinary(app *AppConfig, namespace string) error {
 	binBase := filepath.Base(app.BinaryPath)
 	targetBinPath := fmt.Sprintf("/opt/apps/%s", binBase)
 
-	// Check if target binary exists on persistent storage volume
-	checkOut, _ := ExecPod(pod, namespace, "systemd-runner", []string{
-		"sh", "-c", fmt.Sprintf("test -f '%s' && echo 'EXISTS' || echo 'MISSING'", targetBinPath),
+	localHash := fileSHA256(app.BinaryPath)
+	remoteOut, _ := ExecPod(pod, namespace, "systemd-runner", []string{
+		"sh", "-c", fmt.Sprintf("sha256sum '%s' 2>/dev/null | awk '{print $1}'", targetBinPath),
 	}, "")
+	remoteHash := strings.TrimSpace(remoteOut)
 
-	if strings.Contains(checkOut, "MISSING") {
+	if remoteHash == "" || (localHash != "" && localHash != remoteHash) {
 		fmt.Printf("--> Uploading local binary '%s' to %s:%s...\n", app.BinaryPath, pod, targetBinPath)
 		err = CpToPod(app.BinaryPath, targetBinPath, pod, namespace, "systemd-runner")
 		if err != nil {
@@ -36,9 +53,13 @@ func DeployBinary(app *AppConfig, namespace string) error {
 		if err != nil {
 			return fmt.Errorf("failed to chmod binary: %w", err)
 		}
+		// Stop running transient unit if any so next request launches the updated binary
+		_, _ = ExecPod(pod, namespace, "systemd-runner", []string{
+			"systemctl", "stop", fmt.Sprintf("app-%s.service", app.CanonicalHost()),
+		}, "")
 		fmt.Printf("--> Successfully deployed and set executable: %s\n", targetBinPath)
 	} else {
-		fmt.Printf("--> Binary '%s' already exists on shared persistent volume.\n", targetBinPath)
+		fmt.Printf("--> Binary '%s' is up to date on shared persistent volume (sha256: %s).\n", targetBinPath, localHash[:12])
 	}
 
 	// Configure entrypoint for canonical host
