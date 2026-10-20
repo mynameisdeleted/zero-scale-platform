@@ -104,3 +104,12 @@ make push
 ```bash
 make deploy
 ```
+
+---
+
+## License
+
+This project is licensed under the **Mozilla Public License 2.0 (MPL-2.0)** — see the [LICENSE.txt](LICENSE.txt) file for details.
+
+Modifications to the covered files must be made available under the MPL-2.0. Larger works combining this software with proprietary code retain their own independent licensing without contamination.
+
