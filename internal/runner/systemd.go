@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/jwtauth"
 )
 
 // IsServiceActive checks if the dynamic systemd unit is running
@@ -135,6 +136,16 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 					baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 				}
 			}
+		}
+
+		// If this app is fronted by OAuth, inject OAUTH_PUBLIC_KEY and LOGOUT_URL
+		if appData["oauth-setup"] != "" || appData["oauth_setup"] != "" || appData["oauth"] != "" {
+			signer := jwtauth.GetSigner()
+			if pubKey := signer.PublicPEM(); pubKey != "" {
+				baseArgs = append(baseArgs, fmt.Sprintf("--setenv=OAUTH_PUBLIC_KEY=%s", pubKey))
+			}
+			logoutURL := fmt.Sprintf("https://%s/oauth2/sign_out", host)
+			baseArgs = append(baseArgs, fmt.Sprintf("--setenv=LOGOUT_URL=%s", logoutURL))
 		}
 	}
 

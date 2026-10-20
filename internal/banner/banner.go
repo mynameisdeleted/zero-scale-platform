@@ -16,8 +16,12 @@ func PrintStartup(cfg *config.Config) {
 	log.Printf("🚀 Zero-Scale Platform Gateway Ready on %s", cfg.ListenAddr)
 	log.Printf("📁 Applications directory: %s", cfg.AppsDir)
 	log.Printf("☸️  Kubernetes Pod:        %s", cfg.PodName)
-	log.Printf("☸️  Pod Log Viewer:        %s", cfg.KubeLogURL())
-	log.Printf("☸️  Pod Web Shell:         %s", cfg.KubeShellURL())
+	if logURL := cfg.KubeLogURL(); logURL != "" {
+		log.Printf("☸️  Pod Log Viewer:        %s", logURL)
+	}
+	if shellURL := cfg.KubeShellURL(); shellURL != "" {
+		log.Printf("☸️  Pod Web Shell:         %s", shellURL)
+	}
 	log.Println("--------------------------------------------------------------------------------")
 	if entries, err := os.ReadDir(cfg.AppsDir); err == nil {
 		for _, e := range entries {
@@ -34,7 +38,7 @@ func PrintRegistration(host string) {
 	unitName := fmt.Sprintf("app-%s", host)
 	log.Printf("   ⭐ Service Registered: https://%s/", host)
 	log.Printf("      🖥️  Web Logs: https://%s/_logs", host)
-	log.Printf("      📋 CLI Logs: kubectl exec -n default deployment/zero-scale-gateway -- journalctl -u %s -f", unitName)
+	log.Printf("      📋 CLI Logs: kubectl exec deployment/zero-scale-gateway -c systemd-runner -- journalctl -u %s -f", unitName)
 }
 
 // PrintScaleUp prints the scale-up lifecycle banner
@@ -44,7 +48,7 @@ func PrintScaleUp(host string, port int) {
 	log.Printf("⚡ [SCALE-UP] %s (port %d)", host, port)
 	log.Printf("   🌐 App URL:    https://%s/", host)
 	log.Printf("   🖥️  Web Logs:   https://%s/_logs", host)
-	log.Printf("   📋 CLI Logs:   kubectl exec -n default deployment/zero-scale-gateway -- journalctl -u %s -f", unitName)
+	log.Printf("   📋 CLI Logs:   kubectl exec deployment/zero-scale-gateway -c systemd-runner -- journalctl -u %s -f", unitName)
 	log.Println("--------------------------------------------------------------------------------")
 }
 
@@ -53,5 +57,5 @@ func PrintScaleToZero(host string, idleTimeout time.Duration) {
 	unitName := fmt.Sprintf("app-%s", host)
 	log.Printf("💤 [SCALE-TO-ZERO] %s idle for %v (deactivated unit %s)", host, idleTimeout, unitName)
 	log.Printf("   🖥️  Web Logs:   https://%s/_logs", host)
-	log.Printf("   📋 CLI Logs:   kubectl exec -n default deployment/zero-scale-gateway -- journalctl -u %s -n 50", unitName)
+	log.Printf("   📋 CLI Logs:   kubectl exec deployment/zero-scale-gateway -c systemd-runner -- journalctl -u %s -n 50", unitName)
 }

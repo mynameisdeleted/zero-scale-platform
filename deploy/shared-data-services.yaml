@@ -9,7 +9,7 @@ metadata:
 spec:
   accessModes:
   - ReadWriteOnce
-  storageClassName: longhorn-2-replicas
+  # storageClassName: longhorn-2-replicas # Optional: customize if needed; omit to use cluster default
   resources:
     requests:
       storage: 10Gi

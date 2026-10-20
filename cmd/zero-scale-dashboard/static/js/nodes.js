@@ -36,7 +36,7 @@ function renderHogPills(hogs) {
 
 function formatZeroServiceName(host) {
   if (!host) return '';
-  return host.replace('.fairfaxmedia.net', '');
+  return host;
 }
 
 function renderZeroPills(zeroApps) {

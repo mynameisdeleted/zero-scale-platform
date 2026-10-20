@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -62,16 +63,26 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// KubeLogURL returns the direct Kubernetes Dashboard web log URL for this pod
+// KubeLogURL returns the direct Kubernetes Dashboard web log URL for this pod, if configured
 func (c *Config) KubeLogURL() string {
-	return fmt.Sprintf("https://kube.fairfaxmedia.net/#/log/%s/%s/pod?namespace=%s&container=systemd-runner",
-		c.KubeNamespace, c.PodName, c.KubeNamespace)
+	base := os.Getenv("KUBE_DASHBOARD_URL")
+	if base == "" {
+		return ""
+	}
+	base = strings.TrimRight(base, "/")
+	return fmt.Sprintf("%s/#/log/%s/%s/pod?namespace=%s&container=systemd-runner",
+		base, c.KubeNamespace, c.PodName, c.KubeNamespace)
 }
 
-// KubeShellURL returns the direct Kubernetes Dashboard web shell URL for this pod
+// KubeShellURL returns the direct Kubernetes Dashboard web shell URL for this pod, if configured
 func (c *Config) KubeShellURL() string {
-	return fmt.Sprintf("https://kube.fairfaxmedia.net/#/shell/%s/%s/systemd-runner?namespace=%s",
-		c.KubeNamespace, c.PodName, c.KubeNamespace)
+	base := os.Getenv("KUBE_DASHBOARD_URL")
+	if base == "" {
+		return ""
+	}
+	base = strings.TrimRight(base, "/")
+	return fmt.Sprintf("%s/#/shell/%s/%s/systemd-runner?namespace=%s",
+		base, c.KubeNamespace, c.PodName, c.KubeNamespace)
 }
 
 func getEnv(key, fallback string) string {

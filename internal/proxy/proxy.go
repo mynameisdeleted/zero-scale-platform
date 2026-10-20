@@ -15,6 +15,7 @@ import (
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/banner"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/handlers"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/jwtauth"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/runner"
 )
 
@@ -203,6 +204,43 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	targetURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+	// Custom Director to mint ephemeral X-ZeroScale-Token JWT when OAuth headers are present
+	origDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		origDirector(req)
+
+		// Check for upstream OAuth authentication headers from oauth2-proxy / ingress
+		email := req.Header.Get("X-Auth-Request-Email")
+		user := req.Header.Get("X-Auth-Request-User")
+		if user == "" {
+			user = req.Header.Get("X-Auth-Request-Preferred-Username")
+		}
+
+		if email != "" || user != "" {
+			var groups []string
+			if rawGroups := req.Header.Get("X-Auth-Request-Groups"); rawGroups != "" {
+				for _, g := range strings.Split(rawGroups, ",") {
+					if trimmed := strings.TrimSpace(g); trimmed != "" {
+						groups = append(groups, trimmed)
+					}
+				}
+			}
+
+			signer := jwtauth.GetSigner()
+			token, err := signer.MintToken(email, user, groups, host)
+			if err == nil {
+				req.Header.Set("X-ZeroScale-Token", token)
+				// Also set standard Bearer Authorization if not already populated
+				if req.Header.Get("Authorization") == "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+			} else {
+				log.Printf("⚠️ Failed to mint ZeroScale JWT for %s: %v", host, err)
+			}
+		}
+	}
+
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("Proxy error for %s on port %d: %v. Cleaning up service...", host, port, err)
 		_ = g.StopService(host)

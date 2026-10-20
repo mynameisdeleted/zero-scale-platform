@@ -540,9 +540,11 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
 spec:
-  ingressClassName: public
-  rules:
 `, ingName, namespace, setupName))
+	if cls := resolveIngressClass(); cls != "" {
+		b.WriteString(fmt.Sprintf("  ingressClassName: %s\n", cls))
+	}
+	b.WriteString("  rules:\n")
 
 	for _, host := range hosts {
 		b.WriteString(fmt.Sprintf(`  - host: %s

@@ -15,13 +15,8 @@ async function loadStatus() {
       headers['Authorization'] = 'Bearer ' + token;
     }
 
-    // Load https://kstat.fairfaxmedia.net/api/status in background asynchronously
-    let res;
-    try {
-      res = await fetch('https://kstat.fairfaxmedia.net/api/status', { headers });
-    } catch (e) {
-      res = await fetch('/api/status', { headers });
-    }
+    // Load /api/status in background asynchronously from current host
+    const res = await fetch('/api/status', { headers });
 
     if (!res.ok) throw new Error('API returned ' + res.status);
     const data = await res.json();

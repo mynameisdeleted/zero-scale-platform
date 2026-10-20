@@ -43,7 +43,9 @@ func GetMySQLPod(namespace string) (string, error) {
 	}, "")
 	pod := strings.TrimSpace(out)
 	if err != nil || pod == "" {
-		return "", fmt.Errorf("shared-mysql pod not running in namespace '%s' (deploy via deploy/shared-data-services.yaml)", namespace)
+		return "", fmt.Errorf(`shared-mysql operator pod is not running in namespace '%s'
+--> Remediation: Deploy shared MySQL with: kubectl apply -f deploy/shared-data-services.yaml -n %s
+--> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#mysql-and-redis`, namespace, namespace)
 	}
 	return pod, nil
 }
@@ -62,7 +64,13 @@ func GetPostgresPod(namespace string) (string, error) {
 			return pod, nil
 		}
 	}
-	return "", fmt.Errorf("CloudNativePG primary pod (ha-postgres) not running in namespace '%s' or 'cnpg-system'", namespace)
+	return "", fmt.Errorf(`CloudNativePG PostgreSQL cluster ('ha-postgres') is not running in namespace '%s' or 'cnpg-system'
+--> Remediation:
+    1. Deploy CloudNativePG via Open Cream Cheese:
+       https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese
+    2. Or install directly:
+       kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/main/releases/cnpg-1.22.0.yaml
+--> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#postgresql-cloudnativepg`, namespace)
 }
 
 // ProvisionMySQL idempotently provisions schema and user on shared MySQL operator.

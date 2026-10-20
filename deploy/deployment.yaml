@@ -20,8 +20,6 @@ spec:
         app: zero-scale-gateway
         app.kubernetes.io/name: zero-scale-gateway
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: didi-macbookpro14-3
       containers:
       - name: systemd-runner
         image: localhost:32000/systemd-runner:latest
@@ -39,8 +37,6 @@ spec:
           name: run-lock
         - mountPath: /opt/apps
           name: apps-volume
-        - mountPath: /app/uploads
-          name: bdash-uploads
       volumes:
       - name: run
         emptyDir:
@@ -51,6 +47,4 @@ spec:
       - name: apps-volume
         persistentVolumeClaim:
           claimName: zero-scale-binaries-pvc
-      - name: bdash-uploads
-        persistentVolumeClaim:
-          claimName: builds-dash-uploads-longhorn-rwx
+

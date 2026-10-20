@@ -902,18 +902,7 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 
 	appMap := make(map[string]ZeroScaleApp)
 
-	// 1. Seed known baseline applications
-	for h, desc := range knownDescriptions {
-		appMap[h] = ZeroScaleApp{
-			Host:        h,
-			URL:         fmt.Sprintf("https://%s/", h),
-			Type:        "elf",
-			LogsURL:     fmt.Sprintf("https://%s/_logs", h),
-			Description: desc,
-		}
-	}
-
-	// 2. Discover from Kubernetes ConfigMaps (zero-scale-app=true)
+	// 1. Discover from Kubernetes ConfigMaps (zero-scale-app=true)
 	for _, path := range []string{
 		"/api/v1/namespaces/default/configmaps?labelSelector=zero-scale-app=true",
 		"/api/v1/configmaps?labelSelector=zero-scale-app=true",
@@ -1072,44 +1061,49 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 	categories := make(map[string][]SiteLink)
 
-	// Baseline infrastructure sites
-	baseline := []SiteLink{
-		{
-			Name:        "Git Server (Gitea)",
-			Host:        "git.fairfaxmedia.net",
-			URL:         "https://git.fairfaxmedia.net/",
-			Namespace:   "default",
-			Category:    "Core & Infrastructure",
-			Icon:        "📂",
-			Description: "Internal Git repository server hosting open-cream-cheese and zero-scale-platform",
-		},
-		{
+	// Baseline infrastructure sites: Git Server defaults to git.fairfaxmedia.net where repos are housed;
+	// other infrastructure sites are migratable and configured via env vars or dynamic cluster Ingresses.
+	var baseline []SiteLink
+	gitURL := os.Getenv("GIT_SERVER_URL")
+	if gitURL == "" {
+		gitURL = "https://git.fairfaxmedia.net/open-cream-cheese"
+	}
+	cleanHost := strings.TrimPrefix(strings.TrimPrefix(gitURL, "https://"), "http://")
+	cleanHost = strings.TrimRight(cleanHost, "/")
+	baseline = append(baseline, SiteLink{
+		Name:        "Git Server",
+		Host:        cleanHost,
+		URL:         gitURL,
+		Namespace:   "default",
+		Category:    "Core & Infrastructure",
+		Icon:        "📂",
+		Description: "Source repositories for open-cream-cheese and zero-scale-platform",
+	})
+	if kubeURL := os.Getenv("KUBE_DASHBOARD_URL"); kubeURL != "" {
+		cleanHost := strings.TrimPrefix(strings.TrimPrefix(kubeURL, "https://"), "http://")
+		cleanHost = strings.TrimRight(cleanHost, "/")
+		baseline = append(baseline, SiteLink{
 			Name:        "Kubernetes Dashboard",
-			Host:        "kube.fairfaxmedia.net",
-			URL:         "https://kube.fairfaxmedia.net/",
+			Host:        cleanHost,
+			URL:         kubeURL,
 			Namespace:   "kube-system",
 			Category:    "Core & Infrastructure",
 			Icon:        "☸️",
-			Description: "Full cluster management UI, workloads, secrets, storage, and web shell",
-		},
-		{
+			Description: "Full cluster management UI, workloads, secrets, and storage",
+		})
+	}
+	if promURL := os.Getenv("PROMETHEUS_URL"); promURL != "" {
+		cleanHost := strings.TrimPrefix(strings.TrimPrefix(promURL, "https://"), "http://")
+		cleanHost = strings.TrimRight(cleanHost, "/")
+		baseline = append(baseline, SiteLink{
 			Name:        "Prometheus Monitoring",
-			Host:        "prom-serv.kube.fairfaxmedia.net",
-			URL:         "https://prom-serv.kube.fairfaxmedia.net/",
+			Host:        cleanHost,
+			URL:         promURL,
 			Namespace:   "default",
 			Category:    "Core & Infrastructure",
 			Icon:        "📈",
-			Description: "Cluster metrics server, alerts, targets, and time-series graphing",
-		},
-		{
-			Name:        "Temporal Workflow Orchestrator",
-			Host:        "temporal.ffxm.cc",
-			URL:         "https://temporal.ffxm.cc/",
-			Namespace:   "temporal",
-			Category:    "Core & Infrastructure",
-			Icon:        "⏳",
-			Description: "Durable workflow execution engine and management web UI",
-		},
+			Description: "Cluster metrics server, alerts, targets, and graphing",
+		})
 	}
 	seenHosts := make(map[string]bool)
 	for _, b := range baseline {

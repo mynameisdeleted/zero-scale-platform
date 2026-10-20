@@ -47,7 +47,7 @@ func DeployBinary(app *AppConfig, namespace string) error {
 		fmt.Printf("--> Uploading local binary '%s' to %s:%s...\n", app.BinaryPath, pod, targetBinPath)
 		err = CpToPod(app.BinaryPath, targetBinPath, pod, namespace, "systemd-runner")
 		if err != nil {
-			return fmt.Errorf("failed to copy binary to pod: %w", err)
+			return fmt.Errorf("failed to copy binary to pod: %w\n--> Ensure the storage volume for /opt/apps (zero-scale-binaries-pvc) is bound and mounted in the gateway pod.\n--> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#persistent-storage-and-volumes", err)
 		}
 		_, err = ExecPod(pod, namespace, "systemd-runner", []string{"chmod", "+x", targetBinPath}, "")
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -44,7 +45,11 @@ func GetGatewayPod(namespace string) (string, error) {
 			return pod, nil
 		}
 	}
-	return "", fmt.Errorf("no running zero-scale gateway pod found in namespace '%s'", namespace)
+	return "", fmt.Errorf(`no running zero-scale gateway pod found in namespace '%s'
+--> Remediation: Deploy the gateway with: make deploy-manifests (or kubectl apply -f deploy/ -n %s)
+--> Note: If running on OpenShift, ensure the privileged SCC is granted:
+    oc adm policy add-scc-to-user privileged -z default -n %s
+--> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#deploy-to-kubernetes`, namespace, namespace, namespace)
 }
 
 // ResourceExists checks if a Kubernetes resource exists.
@@ -161,10 +166,11 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
 `, proxySvc, namespace))
 	}
-	b.WriteString(`spec:
-  ingressClassName: public
-  rules:
-`)
+	b.WriteString("spec:\n")
+	if cls := resolveIngressClass(); cls != "" {
+		b.WriteString(fmt.Sprintf("  ingressClassName: %s\n", cls))
+	}
+	b.WriteString("  rules:\n")
 	for _, host := range hosts {
 		b.WriteString(fmt.Sprintf(`  - host: %s
     http:
@@ -181,8 +187,23 @@ metadata:
 	return ApplyYAML(b.String(), namespace)
 }
 
+// resolveIngressClass returns the desired IngressClass name, or empty string to use cluster default.
+func resolveIngressClass() string {
+	if cls := os.Getenv("INGRESS_CLASS"); cls != "" {
+		if cls == "none" || cls == "-" || cls == "default" {
+			return ""
+		}
+		return cls
+	}
+	return "public"
+}
+
 // ApplyRedirectIngress creates an edge NGINX Ingress redirecting sourceHost to targetHost.
 func ApplyRedirectIngress(name, namespace, sourceHost, targetHost, serviceName string) error {
+	ingressClassLine := ""
+	if cls := resolveIngressClass(); cls != "" {
+		ingressClassLine = fmt.Sprintf("  ingressClassName: %s\n", cls)
+	}
 	manifest := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -194,8 +215,7 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/permanent-redirect: "https://%s$request_uri"
 spec:
-  ingressClassName: public
-  rules:
+%s  rules:
   - host: %s
     http:
       paths:
@@ -206,7 +226,7 @@ spec:
             name: %s
             port:
               number: 80
-`, name, namespace, serviceName, targetHost, sourceHost, serviceName)
+`, name, namespace, serviceName, targetHost, ingressClassLine, sourceHost, serviceName)
 	return ApplyYAML(manifest, namespace)
 }
 
