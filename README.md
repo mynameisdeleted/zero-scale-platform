@@ -113,6 +113,42 @@ This deploys:
 - `shared-mysql`: Dedicated MySQL 8.0 StatefulSet with automated schema and user provisioning.
 - `shared-redis`: High-performance Redis caching deployment used for scale-to-zero caches and `oauth2-proxy` session storage.
 
+### 4. Shared Ingress OAuth2 / OIDC Authentication
+<a id="oauth2-authentication"></a>
+The platform includes integrated edge authentication powered by `oauth2-proxy` and `ingress-nginx`. This allows applications to enforce enterprise SSO (Google, Gitea, GitHub, GitLab, Keycloak, Authentik, Okta) and team RBAC without writing any auth code in the application binary. Authenticated user identity (`X-Auth-Request-User`, `X-Auth-Request-Email`, `X-Auth-Request-Groups`) is forwarded directly to the app.
+
+#### Prerequisites:
+1. **OAuth2 / OIDC Identity Provider**:
+   - An accessible OAuth2 provider (e.g. `https://git.fairfaxmedia.net`, `https://accounts.google.com`, Keycloak, etc.).
+   - A registered application client with:
+     - **Client ID** (`OAUTH_CLIENT_ID`)
+     - **Client Secret** (`OAUTH_CLIENT_SECRET`)
+     - **Redirect URI(s)**: `https://<your-app-hostname>/oauth2/callback`
+2. **Session Storage (`shared-redis`)**:
+   - Requires `shared-redis` (deployed via `deploy/shared-data-services.yaml`). `oauth2-proxy` stores OIDC session tokens in Redis to prevent the 4KB browser cookie limit from causing `502 Bad Gateway` errors for users with multiple organizational groups.
+3. **Ingress Controller with External Auth Support**:
+   - `ingress-nginx` (or equivalent) supporting external auth subrequests (`auth-url`, `auth-signin`, and `proxy-buffer-size: 16k`).
+4. **Edge TLS Termination**:
+   - Valid HTTPS termination (e.g. wildcard certificate via cert-manager) for application hostnames, as session cookies enforce `Secure: true`.
+
+#### Usage:
+- **Declarative in Application Config (`myapp.conf`)**:
+  ```ini
+  gateway:
+    oauth_setup: corporate-sso
+    oauth_url: https://git.fairfaxmedia.net
+    oauth_group: devops,engineers   # Optional: restrict to specific teams/orgs
+  ```
+- **CLI Management**:
+  ```bash
+  # Standalone provisioning / verification:
+  zero-scale-ctl oauth-setup corporate-sso \
+    --url https://git.fairfaxmedia.net \
+    --group devops \
+    --host myapp.example.com
+  ```
+  `zero-scale-ctl` verifies client credentials against the provider before deploying, generates secure 32-byte cookie secrets, and provisions the shared `oauth2-proxy` deployment and ingress routes automatically. Non-interactive deployments can provide credentials via `OAUTH_CLIENT_ID` and `OAUTH_CLIENT_SECRET` environment variables.
+
 ---
 
 ## Multi-Cluster & Enterprise Compatibility

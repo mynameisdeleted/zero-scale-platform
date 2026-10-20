@@ -367,6 +367,13 @@ func deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup string, requiredCal
 	svcName := OAuthProxyServiceName(setupName)
 	secName := OAuthSetupSecretName(setupName)
 
+	if !ResourceExists("service", "shared-redis", namespace) {
+		fmt.Printf("⚠️  Warning: Service 'shared-redis' was not found in namespace '%s'.\n", namespace)
+		fmt.Printf("--> oauth2-proxy requires shared-redis for session storage.\n")
+		fmt.Printf("--> Deploy with: kubectl apply -f deploy/shared-data-services.yaml -n %s\n", namespace)
+		fmt.Println("--> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#oauth2-authentication")
+	}
+
 	// Extract unique parent domains (e.g. .ffxm.cc, .fairfaxmedia.net) for --whitelist-domain and --cookie-domain
 	domainSet := make(map[string]bool)
 	for _, cb := range requiredCallbacks {
