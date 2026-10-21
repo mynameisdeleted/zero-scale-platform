@@ -20,8 +20,10 @@ spec:
         app: zero-scale-gateway
         app.kubernetes.io/name: zero-scale-gateway
     spec:
+      serviceAccountName: zero-scale-gateway
       containers:
       - name: systemd-runner
+        # Replace with your container registry image or build locally via 'make image'
         image: localhost:32000/systemd-runner:latest
         imagePullPolicy: Always
         ports:

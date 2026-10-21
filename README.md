@@ -159,7 +159,7 @@ The Zero-Scale Platform is engineered to run on any Kubernetes conformant distri
 The gateway container (`systemd-runner`) runs systemd as PID 1 to sandbox local Linux processes and manage cgroups. This requires privileged container execution.
 In OpenShift, run the following before deploying:
 ```bash
-oc adm policy add-scc-to-user privileged -z default -n <namespace>
+oc adm policy add-scc-to-user privileged -z zero-scale-gateway -n <namespace>
 ```
 
 ### Ingress & Custom Wildcard Certificates
@@ -194,8 +194,17 @@ make push
 
 ### 3. Deploy to Kubernetes
 ```bash
+# Apply all core platform manifests (ServiceAccount, RBAC, PVC, Deployment, Service, Ingress):
+kubectl apply -f deploy/
+
+# Or deploy via Makefile:
 make deploy
 ```
+
+> [!NOTE]
+> - **Persistent Storage**: [`deploy/pvc.yaml`](deploy/pvc.yaml) requests a 5Gi `ReadWriteMany` (RWX) volume (`zero-scale-binaries-pvc`) using your cluster's default StorageClass. If your cluster only supports `ReadWriteOnce` (RWO), change `accessModes` in `deploy/pvc.yaml` to `ReadWriteOnce`.
+> - **RBAC Permissions**: [`deploy/rbac.yaml`](deploy/rbac.yaml) creates `ServiceAccount: zero-scale-gateway` with a namespaced `Role` allowing the gateway to read application `configmaps`, database `secrets`, and pod state.
+
 
 ---
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/sha256"
+	"debug/elf"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -23,10 +25,83 @@ func fileSHA256(path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ValidateBinaryArchitecture verifies that the binary is compatible with the Linux x86-64 gateway container.
+// It detects macOS Mach-O, Windows PE, and mismatched Linux ELF architectures (e.g. ARM64) before deployment.
+func ValidateBinaryArchitecture(path string) error {
+	if os.Getenv("ZERO_SCALE_SKIP_ARCH_CHECK") == "1" || os.Getenv("ZERO_SCALE_SKIP_ARCH_CHECK") == "true" {
+		return nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open binary '%s': %w", path, err)
+	}
+	defer f.Close()
+
+	header := make([]byte, 32)
+	n, _ := io.ReadFull(f, header)
+	if n < 4 {
+		return nil
+	}
+
+	// 1. Script with shebang (e.g. #!/bin/sh)
+	if header[0] == '#' && header[1] == '!' {
+		return nil
+	}
+
+	// 2. WebAssembly binary (\x00asm)
+	if header[0] == 0x00 && header[1] == 0x61 && header[2] == 0x73 && header[3] == 0x6d {
+		return nil
+	}
+
+	// 3. macOS Mach-O binary
+	// Magic numbers: 0xfeedface (32-bit), 0xfeedfacf (64-bit), 0xcafebabe (Fat/Universal)
+	magicBE := binary.BigEndian.Uint32(header[0:4])
+	magicLE := binary.LittleEndian.Uint32(header[0:4])
+	if magicBE == 0xfeedface || magicBE == 0xfeedfacf || magicBE == 0xcafebabe ||
+		magicLE == 0xfeedface || magicLE == 0xfeedfacf || magicLE == 0xcafebabe {
+		return fmt.Errorf("binary '%s' is a macOS (Mach-O) binary.\nThe zero-scale gateway container runs Linux x86-64 (amd64) and cannot execute macOS binaries (will fail with 'exec format error').\n--> To cross-compile for Linux x86-64, run:\n    GOOS=linux GOARCH=amd64 go build -o %s ...",
+			path, filepath.Base(path))
+	}
+
+	// 4. Windows PE executable ("MZ")
+	if header[0] == 'M' && header[1] == 'Z' {
+		return fmt.Errorf("binary '%s' is a Windows (PE) executable.\nThe zero-scale gateway container runs Linux x86-64 (amd64) and cannot execute Windows binaries.\n--> To cross-compile for Linux x86-64, run:\n    GOOS=linux GOARCH=amd64 go build -o %s ...",
+			path, filepath.Base(path))
+	}
+
+	// 5. Linux ELF binary
+	if header[0] == 0x7f && header[1] == 'E' && header[2] == 'L' && header[3] == 'F' {
+		if n >= 20 {
+			var machine uint16
+			if header[5] == 2 { // Big-endian
+				machine = binary.BigEndian.Uint16(header[18:20])
+			} else { // Little-endian
+				machine = binary.LittleEndian.Uint16(header[18:20])
+			}
+			if elf.Machine(machine) != elf.EM_X86_64 {
+				archName := elf.Machine(machine).String()
+				if elf.Machine(machine) == elf.EM_AARCH64 {
+					archName = "Linux ARM64 (aarch64)"
+				}
+				return fmt.Errorf("binary '%s' is compiled for %s, but the zero-scale gateway container runs Linux x86-64 (amd64).\nDeploying this binary will cause container startup failure with 'exec format error'.\n--> To cross-compile for Linux x86-64, run:\n    GOOS=linux GOARCH=amd64 go build -o %s ...",
+					path, archName, filepath.Base(path))
+			}
+			return nil
+		}
+	}
+
+	return nil
+}
+
 // DeployBinary ensures local binary is uploaded to gateway pod /opt/apps/ and symlinks are configured.
 func DeployBinary(app *AppConfig, namespace string) error {
 	if _, err := os.Stat(app.BinaryPath); os.IsNotExist(err) {
 		return fmt.Errorf("local binary not found at '%s'", app.BinaryPath)
+	}
+
+	if err := ValidateBinaryArchitecture(app.BinaryPath); err != nil {
+		return err
 	}
 
 	pod, err := GetGatewayPod(namespace)

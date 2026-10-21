@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zero-scale-binaries-pvc
+  namespace: default
+  labels:
+    app.kubernetes.io/name: zero-scale-gateway
+    app.kubernetes.io/part-of: zero-scale-platform
+spec:
+  accessModes:
+    - ReadWriteMany
+  # Note: ReadWriteMany (RWX) is recommended so multiple pod replicas can mount /opt/apps.
+  # If your cluster does not provide an RWX StorageClass, change accessModes to ReadWriteOnce.
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: "" # Leave commented to use cluster default StorageClass
