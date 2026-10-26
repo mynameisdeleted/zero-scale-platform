@@ -47,6 +47,24 @@ func GetActiveServicePort(unit string) int {
 	return 0
 }
 
+func isValidEnvName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for i, c := range name {
+		if i == 0 {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_') {
+				return false
+			}
+		} else {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // StartTransientService executes systemd-run with dynamic environment injection
 func StartTransientService(host string, port int, binaryPath string, cfg *config.Config) error {
 	unitName := fmt.Sprintf("app-%s", host)
@@ -111,10 +129,11 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 			"database_configmap": true, "database_secret": true,
 			"args": true, "user": true,
 			"dynamic-user": true, "dynamic_user": true,
+			"oauth-setup": true, "oauth_setup": true, "oauth": true,
 		}
 
 		for k, v := range appData {
-			if ignoredKeys[k] || strings.Contains(k, "-") {
+			if ignoredKeys[k] || !isValidEnvName(k) {
 				continue
 			}
 			v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
@@ -124,6 +143,9 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		if dbCM := appData["database_configmap"]; dbCM != "" {
 			if cmData, err := FetchK8sResource("configmaps", dbCM, cfg.KubeNamespace); err == nil {
 				for k, v := range cmData {
+					if !isValidEnvName(k) {
+						continue
+					}
 					v = strings.ReplaceAll(v, "${PORT}", strconv.Itoa(port))
 					v = strings.ReplaceAll(v, "${HOST}", host)
 					baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
@@ -133,6 +155,9 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		if dbSec := appData["database_secret"]; dbSec != "" {
 			if secData, err := FetchK8sResource("secrets", dbSec, cfg.KubeNamespace); err == nil {
 				for k, v := range secData {
+					if !isValidEnvName(k) {
+						continue
+					}
 					baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 				}
 			}
