@@ -49,8 +49,8 @@ Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
   oauth-setup <name> Create or update a shared ingress-nginx OAuth2 setup profile
                      [--auth-host auth.apps.example.com: one callback host for every app and environment]
-  status <host>      Inspect systemd service status of an app
-  logs <host>        Fetch journalctl logs for an app unit
+  status <host>      Inspect systemd service status of an app [-n <namespace>]
+  logs <host>        Fetch journalctl logs for an app unit [-n <lines>] [--namespace <ns>]
   list-apps          List all registered zero-scale applications
   delete-app <name>  Delete an application ConfigMap; --purge removes its Ingress, Secrets, host entries
                      and OAuth routes and stops it everywhere; --drop-database also drops its database,
@@ -60,7 +60,7 @@ Commands:
 
 Options for apply:
   -f, --file <file>      Path to 10-line application config file [Required]
-  --expand <file>        Optional: output fully expanded Kubernetes YAML manifest
+  --expand <file>        Also write the expanded Kubernetes YAML to <file> (apply still runs; it is not a dry run)
   -n, --namespace <ns>   Target namespace (default: $NAMESPACE or 'default')
 
 Examples:
@@ -81,6 +81,13 @@ func main() {
 	namespace := os.Getenv("NAMESPACE")
 	if namespace == "" {
 		namespace = "default"
+	}
+
+	// status, logs, list-apps and delete-app take -n/--namespace anywhere in their
+	// arguments (for logs, a numeric -n is still the line count).
+	switch cmd {
+	case "status", "logs", "list-apps", "delete-app":
+		namespace, os.Args = extractNamespace(os.Args, namespace, cmd == "logs")
 	}
 
 	switch cmd {
@@ -550,6 +557,39 @@ data:
 	}
 	fmt.Println("==============================================================================")
 	return nil
+}
+
+// extractNamespace removes -n/--namespace <ns> (or --namespace=ns) from args and
+// returns the namespace. When numericN is set, "-n <digits>" is left in place.
+func extractNamespace(args []string, namespace string, numericN bool) (string, []string) {
+	out := []string{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--namespace="):
+			namespace = strings.TrimPrefix(a, "--namespace=")
+			continue
+		case (a == "-n" || a == "--namespace") && i+1 < len(args):
+			v := args[i+1]
+			if a == "-n" && numericN && isDigits(v) {
+				break
+			}
+			namespace = v
+			i++
+			continue
+		}
+		out = append(out, a)
+	}
+	return namespace, out
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 func resolveAppHost(hostOrApp, namespace string) string {

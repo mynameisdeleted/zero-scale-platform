@@ -27,6 +27,13 @@ func TestGatewayManifest(t *testing.T) {
 			t.Errorf("manifest missing %q", want)
 		}
 	}
+	if !strings.Contains(m, "minAvailable: 1") {
+		t.Error("2 replicas keep one available")
+	}
+	single, _ := GatewayManifest(GatewayOptions{Namespace: "qa", Image: "i", RWXClass: "x", Replicas: 1})
+	if !strings.Contains(single, "maxUnavailable: 1") || strings.Contains(single, "minAvailable") {
+		t.Error("a single replica must not block node drains")
+	}
 	if strings.Contains(m, "*labels") || strings.Contains(m, "&labels") {
 		t.Error("YAML anchors do not work across documents")
 	}

@@ -47,6 +47,11 @@ func GatewayManifest(o GatewayOptions) (string, error) {
 	if o.RWXClass == "" {
 		return "", fmt.Errorf("no RWX StorageClass for /opt/apps; run 'zero-scale-ctl init' or 'zero-scale-ctl install longhorn', or pass --rwx-class")
 	}
+	// With one replica, minAvailable: 1 would block every node drain.
+	pdb := "minAvailable: 1"
+	if o.Replicas < 2 {
+		pdb = "maxUnavailable: 1"
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -228,11 +233,11 @@ metadata:
     app.kubernetes.io/part-of: zero-scale-platform
     app.kubernetes.io/managed-by: zero-scale-ctl
 spec:
-  minAvailable: 1
+  %[9]s
   selector:
     matchLabels:
       app: zero-scale-gateway
-`, o.Namespace, o.Image, o.Replicas, o.RWXClass, o.VolumeSize, o.IdleTimeout, o.ImagePullPol, o.DataSize), nil
+`, o.Namespace, o.Image, o.Replicas, o.RWXClass, o.VolumeSize, o.IdleTimeout, o.ImagePullPol, o.DataSize, pdb), nil
 }
 
 var hostRe = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)

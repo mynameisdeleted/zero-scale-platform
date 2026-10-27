@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,11 +29,14 @@ func Load() (*Config, error) {
 	}
 	defaultAppsDir := getEnv("APPS_DIR", "/opt/apps")
 	defaultConfigPath := getEnv("CONFIG_PATH", "/etc/zero-scale/artifacts.json")
-	defaultIdleTimeout := getEnvDuration("IDLE_TIMEOUT", 30*time.Second)
+	defaultIdleTimeout := getEnvDuration("IDLE_TIMEOUT", 10*time.Second)
 	defaultCheckPeriod := getEnvDuration("CHECK_PERIOD", 2*time.Second)
-	defaultNamespace := getEnv("POD_NAMESPACE", "default")
+	defaultNamespace := getEnv("POD_NAMESPACE", "")
+	if defaultNamespace == "" {
+		defaultNamespace = serviceAccountNamespace()
+	}
 
-	podName := os.Getenv("POD_NAME")
+	podName := getEnv("POD_NAME", "")
 	if podName == "" {
 		if h, err := os.Hostname(); err == nil && h != "" {
 			podName = h
@@ -85,15 +89,60 @@ func (c *Config) KubeShellURL() string {
 		base, c.KubeNamespace, c.PodName, c.KubeNamespace)
 }
 
+// getEnv reads key from the process environment, then from the container's
+// environment: the gateway runs as a systemd service, which does not inherit the
+// pod's env vars (POD_NAMESPACE, IDLE_TIMEOUT) unless the unit passes them on.
 func getEnv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	if val := containerEnv()[key]; val != "" {
 		return val
 	}
 	return fallback
 }
 
+var (
+	containerEnvOnce sync.Once
+	containerEnvVars map[string]string
+)
+
+// containerEnv is PID 1's environment (systemd, started by the container runtime).
+func containerEnv() map[string]string {
+	containerEnvOnce.Do(func() {
+		containerEnvVars = parseEnviron(readFile("/proc/1/environ"))
+	})
+	return containerEnvVars
+}
+
+func parseEnviron(b []byte) map[string]string {
+	vars := map[string]string{}
+	for _, kv := range strings.Split(string(b), "\x00") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+// serviceAccountNamespace is the pod's namespace as mounted by Kubernetes, so a
+// gateway in qa never reads apps from default when POD_NAMESPACE is missing.
+func serviceAccountNamespace() string {
+	if ns := strings.TrimSpace(string(readFile(serviceAccountNamespaceFile))); ns != "" {
+		return ns
+	}
+	return "default"
+}
+
+var serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+func readFile(path string) []byte {
+	b, _ := os.ReadFile(path)
+	return b
+}
+
 func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
+	if val := getEnv(key, ""); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
 			return d
 		}

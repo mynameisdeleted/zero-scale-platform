@@ -223,3 +223,18 @@ func TestInstallPostgresIntoEnv(t *testing.T) {
 		t.Error("an env cluster must not replace the platform's Postgres")
 	}
 }
+
+func TestExtractNamespace(t *testing.T) {
+	ns, args := extractNamespace([]string{"zsctl", "status", "-n", "qa", "mock-qa.ffxm.cc"}, "default", false)
+	if ns != "qa" || strings.Join(args, " ") != "zsctl status mock-qa.ffxm.cc" {
+		t.Errorf("status: %s %v", ns, args)
+	}
+	ns, args = extractNamespace([]string{"zsctl", "logs", "mock", "-n", "100", "--namespace=qa"}, "default", true)
+	if ns != "qa" || strings.Join(args, " ") != "zsctl logs mock -n 100" {
+		t.Errorf("logs: %s %v", ns, args)
+	}
+	ns, _ = extractNamespace([]string{"zsctl", "logs", "mock", "-n", "qa"}, "default", true)
+	if ns != "qa" {
+		t.Errorf("logs -n qa: %s", ns)
+	}
+}

@@ -5,7 +5,10 @@ After=network.target
 [Service]
 Type=simple
 ExecStartPre=/bin/sh -c "echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || true"
-ExecStart=/usr/local/bin/gateway -idle-timeout=10s -check-period=2s
+# Hand the pod's env (set in the Deployment) to the gateway; it also falls back to
+# PID 1's environment and the service account namespace when these are missing.
+PassEnvironment=POD_NAME POD_NAMESPACE IDLE_TIMEOUT KUBE_DASHBOARD_URL
+ExecStart=/usr/local/bin/gateway -check-period=2s
 Restart=always
 StandardOutput=journal+console
 StandardError=journal+console
