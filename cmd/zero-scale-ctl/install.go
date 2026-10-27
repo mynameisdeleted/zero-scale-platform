@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/env"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
 )
 
@@ -87,8 +89,25 @@ func installPostgres(args []string) error {
 	chart := fs.String("version", platform.CNPGChartVersion, "cloudnative-pg chart version (helm)")
 	operator := fs.String("operator-version", platform.CNPGVersion, "CloudNativePG operator version (manifest install)")
 	clusterOnly := fs.Bool("cluster-only", false, "Skip the operator install (it is already there)")
+	envName := fs.String("env", "", "Create the cluster inside this environment's namespace and record it only for that environment")
 	yes := fs.Bool("yes", false, "Apply the plan (otherwise only print it)")
 	_ = fs.Parse(args)
+
+	envNS := ""
+	if *envName != "" {
+		matches, err := listEnvNamespaces(env.Label + "=" + *envName)
+		if err != nil {
+			return err
+		}
+		if len(matches) != 1 {
+			return fmt.Errorf("environment %q not found; create it first with 'zero-scale-ctl env create %s'", *envName, *envName)
+		}
+		envNS = matches[0].Metadata.Name
+		*ns = envNS
+		if *name == "ha-postgres" {
+			*name = *envName + "-postgres"
+		}
+	}
 
 	storageClass := *sc
 	if storageClass == "" {
@@ -104,7 +123,7 @@ func installPostgres(args []string) error {
 		ChartVersion: *chart, OperatorVersion: *operator, Helm: haveBinary("helm"),
 		OperatorExists: *clusterOnly || crdExists("clusters.postgresql.cnpg.io"),
 		Namespace:      *ns, Name: *name, Instances: *instances, Size: *size,
-		StorageClass: storageClass, Nodes: nodes.Schedulable,
+		StorageClass: storageClass, Nodes: nodes.Schedulable, NamespaceExists: envNS != "",
 	})
 	if err != nil {
 		return err
@@ -113,13 +132,40 @@ func installPostgres(args []string) error {
 	if nodes.Schedulable < *instances {
 		fmt.Printf("⚠️  %d instances on %d node(s): some instances will share a node\n", *instances, nodes.Schedulable)
 	}
+	if envNS != "" {
+		fmt.Printf("    recorded for environment %q only (its %s ConfigMap); the platform's Postgres is unchanged\n", *envName, env.ConfigMapName)
+	}
 	if err := executePlan(steps, *yes); err != nil || !*yes {
 		return err
 	}
-	return updatePlatform(func(c *platform.Config) {
-		c.Postgres = &platform.DBTarget{Operator: "cnpg", Namespace: *ns, Name: *name,
-			RWService: fmt.Sprintf("%s-rw.%s.svc.cluster.local:5432", *name, *ns)}
-	})
+	target := &platform.DBTarget{Operator: "cnpg", Namespace: *ns, Name: *name,
+		RWService: fmt.Sprintf("%s-rw.%s.svc.cluster.local:5432", *name, *ns)}
+	if envNS != "" {
+		return recordEnvPostgres(envNS, target)
+	}
+	return updatePlatform(func(c *platform.Config) { c.Postgres = target })
+}
+
+// recordEnvPostgres points one environment at its own Postgres cluster.
+func recordEnvPostgres(namespace string, t *platform.DBTarget) error {
+	e, err := loadEnv(namespace)
+	if err != nil {
+		return err
+	}
+	if e == nil {
+		return fmt.Errorf("namespace %s has no %s ConfigMap", namespace, env.ConfigMapName)
+	}
+	for k := range e.Overrides {
+		if strings.HasPrefix(k, "postgres.") {
+			delete(e.Overrides, k)
+		}
+	}
+	e.Overrides["postgres.operator"] = t.Operator
+	e.Overrides["postgres.cluster"] = t.Ref()
+	e.Overrides["postgres.rwService"] = t.RWService
+	fmt.Printf("\n==> Environment %q now provisions Postgres databases on %s\n", e.Name, t.Ref())
+	return CreateOrUpdateConfigMap(env.ConfigMapName, namespace, e.ToData(),
+		map[string]string{"app.kubernetes.io/part-of": "zero-scale-platform", "app.kubernetes.io/managed-by": "zero-scale-ctl"})
 }
 
 // executePlan prints every step, then runs them in order when apply is set.

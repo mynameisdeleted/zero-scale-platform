@@ -27,6 +27,7 @@ Platform setup:
   install postgres   Install CloudNativePG and a 3-instance cluster on the HA storage class
                      [--name ha-postgres] [--namespace cnpg-system] [--instances 3] [--size 10Gi]
                      [--storage-class X] [--cluster-only] [--version V]
+                     [--env qa: put the cluster in that environment's namespace and use it only there]
   gateway install    Deploy an HA gateway (replicas, PDB, spread, RBAC, RWX /opt/apps) [--image I] [--replicas 2]
                      [--namespace zero-scale-system] [--rwx-class X] [--volumes-size 20Gi] [--idle-timeout 60s] [--yes]
   gateway upgrade    Same as install, for an existing zero-scale-ctl managed gateway

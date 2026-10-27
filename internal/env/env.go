@@ -283,8 +283,8 @@ type Quota struct {
 	Storage string
 }
 
-// DefaultQuota fits a gateway, an oauth2-proxy and a little headroom.
-var DefaultQuota = Quota{Pods: 10, PVCs: 4, Storage: "100Gi"}
+// DefaultQuota fits a gateway, an oauth2-proxy, a small Postgres cluster and some headroom.
+var DefaultQuota = Quota{Pods: 12, PVCs: 8, Storage: "100Gi"}
 
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))

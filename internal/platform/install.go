@@ -221,6 +221,7 @@ type PostgresOptions struct {
 	Size            string
 	StorageClass    string
 	Nodes           int
+	NamespaceExists bool // leave the namespace alone (re-applying it would drop its labels)
 }
 
 // PostgresPlan returns the steps that install CloudNativePG and an HA cluster.
@@ -269,7 +270,7 @@ func PostgresPlan(o PostgresOptions) ([]Step, error) {
 	}
 	steps = append(steps, Step{Title: "Wait for the Cluster CRD", Command: []string{"kubectl", "wait", "--for=condition=Established", "crd/clusters.postgresql.cnpg.io", "--timeout=5m"}})
 
-	if o.Namespace != "cnpg-system" {
+	if o.Namespace != "cnpg-system" && !o.NamespaceExists {
 		steps = append(steps, Step{Title: "Create namespace " + o.Namespace, Manifest: fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", o.Namespace)})
 	}
 	affinity := "preferred"

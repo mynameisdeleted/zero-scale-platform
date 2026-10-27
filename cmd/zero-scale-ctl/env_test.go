@@ -197,3 +197,29 @@ func TestSharedOAuthProxyArgs(t *testing.T) {
 func sharedOAuthConfig(host, ns string) platform.OAuthConfig {
 	return platform.OAuthConfig{Host: host, Namespace: ns}
 }
+
+func TestInstallPostgresIntoEnv(t *testing.T) {
+	log := fakeKubectl(t, `  "get nodes -o json") cat "$F/nodes.json" ;;
+  "get crd clusters.postgresql.cnpg.io") exit 0 ;;
+  "get namespace -l zero-scale.io/env=qa -o json") echo '{"items":[{"metadata":{"name":"qa","labels":{"zero-scale.io/env":"qa"}}}]}' ;;
+  "get configmap zero-scale-env -n qa -o json") echo '{"data":{"env.name":"qa"}}' ;;
+  "wait "*|"-n qa wait "*) exit 0 ;;`)
+	if err := runInstall([]string{"postgres", "--env", "qa", "--instances", "2", "--size", "5Gi", "--storage-class", "longhorn", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readLog(t, log)
+	for _, want := range []string{
+		"name: qa-postgres\n  namespace: qa", "instances: 2",
+		"name: zero-scale-env", `postgres.cluster: "qa/qa-postgres"`, `postgres.rwService: "qa-postgres-rw.qa.svc.cluster.local:5432"`, `env.name: "qa"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "kind: Namespace") {
+		t.Error("must not re-apply the env namespace (it would drop its labels)")
+	}
+	if strings.Contains(got, "name: zero-scale-platform") {
+		t.Error("an env cluster must not replace the platform's Postgres")
+	}
+}
