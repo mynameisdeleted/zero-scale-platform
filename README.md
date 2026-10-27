@@ -48,6 +48,7 @@ zero-scale-platform/
 │   ├── deployment.yaml           # Gateway Deployment (replaces manual pods)
 │   ├── service.yaml              # Gateway ClusterIP Service (:80)
 │   └── ingress.yaml              # Ingress routing configuration
+├── examples/                     # App .conf files for zero-scale-ctl apply
 ├── scripts/
 │   └── zero-scale-ctl.sh         # CLI tool for deploying and monitoring apps
 └── services/                     # Systemd service unit templates
@@ -123,6 +124,7 @@ zero-scale-ctl status myapp.example.com
 # Follow real-time systemd journal logs
 zero-scale-ctl logs myapp.example.com -n 100
 ```
+See [`examples/`](examples/) for sample `.conf` files and every key `apply` understands.
 
 ---
 
