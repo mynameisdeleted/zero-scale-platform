@@ -38,6 +38,10 @@ func TestIngressExposures(t *testing.T) {
 		if e.Survives() != (i == 5) {
 			t.Errorf("%s/%s: Survives() = %v", e.Namespace, e.Service, e.Survives())
 		}
+		wantZS := (i == 2 || i == 3 || i == 5)
+		if e.ZeroScale != wantZS {
+			t.Errorf("%s/%s: ZeroScale = %v, want %v", e.Namespace, e.Service, e.ZeroScale, wantZS)
+		}
 	}
 }
 
@@ -86,6 +90,9 @@ func TestRouteConflicts(t *testing.T) {
 	if len(got) != 1 || got[0].Host != "hopscotch.kube.fairfaxmedia.net" || got[0].Path != "/" ||
 		strings.Join(got[0].Routes, "; ") != "default/hoppscotch-web -> default/hoppscotch-web; default/zero-scale-gateway -> default/zero-scale-gateway" {
 		t.Errorf("got %+v", got)
+	}
+	if !got[0].ZeroScale {
+		t.Errorf("expected RouteConflict with zero-scale-gateway to have ZeroScale=true")
 	}
 }
 

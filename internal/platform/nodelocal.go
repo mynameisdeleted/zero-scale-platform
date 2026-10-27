@@ -2,6 +2,7 @@ package platform
 
 import (
 	"sort"
+	"strings"
 )
 
 // TemporaryDataAnnotation marks a PVC whose contents may be lost with its node
@@ -18,6 +19,33 @@ type LocalVolume struct {
 	Temporary  bool     // annotated zero-scale.io/data=temporary
 	Owner      string   // Kind/name of the mounting pods' first owner, e.g. StatefulSet/qa-pxc-pxc
 	OwnerNodes int      // distinct nodes running pods of that owner
+	ZeroScale  bool     // volume belongs to zero-scale platform or managed app
+}
+
+func isZeroScalePVC(c object) bool {
+	name := c.str("metadata", "name")
+	if strings.HasPrefix(name, "zero-scale-") || strings.HasPrefix(name, "shared-") {
+		return true
+	}
+	if labels, ok := c.get("metadata", "labels").(map[string]any); ok {
+		if labels["zero-scale-app"] == "true" || labels["app.kubernetes.io/part-of"] == "zero-scale-platform" {
+			return true
+		}
+	}
+	return false
+}
+
+func isZeroScalePod(p object) bool {
+	name := p.str("metadata", "name")
+	if strings.HasPrefix(name, "zero-scale-") || strings.HasPrefix(name, "shared-") {
+		return true
+	}
+	if labels, ok := p.get("metadata", "labels").(map[string]any); ok {
+		if labels["app"] == "zero-scale-gateway" || labels["zero-scale-app"] == "true" || labels["app.kubernetes.io/part-of"] == "zero-scale-platform" {
+			return true
+		}
+	}
+	return false
 }
 
 // Replicated reports whether the workload owning the pods runs on two or more
@@ -60,6 +88,7 @@ func NodeLocalVolumes(k Kube) ([]LocalVolume, error) {
 		byKey[ns+"/"+name] = &LocalVolume{
 			Namespace: ns, PVC: name, Class: class,
 			Temporary: c.str("metadata", "annotations", TemporaryDataAnnotation) == "temporary",
+			ZeroScale: isZeroScalePVC(c),
 		}
 	}
 
@@ -88,6 +117,9 @@ func NodeLocalVolumes(k Kube) ([]LocalVolume, error) {
 			v := byKey[ns+"/"+vol.str("persistentVolumeClaim", "claimName")]
 			if v == nil {
 				continue
+			}
+			if isZeroScalePod(p) {
+				v.ZeroScale = true
 			}
 			v.Pods = append(v.Pods, p.str("metadata", "name"))
 			if n := p.str("spec", "nodeName"); !contains(v.Nodes, n) {

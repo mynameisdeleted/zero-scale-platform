@@ -19,6 +19,7 @@ Usage:
 
 Platform setup:
   doctor             Detect HA storage, Postgres/MySQL operators, ingress and gateways (read-only)
+                     [--env <name> | -e] [--namespace <ns> | -n] [--zero-scale-only | -z]
   init               Record the chosen platform pieces in the zero-scale-platform ConfigMap
                      [--storage-class X] [--rwx-class Y] [--postgres ns/name|none] [--mysql ns/name|none]
                      [--allow-non-ha] [--dry-run] [--yes]

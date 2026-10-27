@@ -15,6 +15,45 @@ type Exposure struct {
 	Nodes     []string // distinct nodes those pods run on
 	Missing   bool     // the Ingress names a Service that does not exist
 	Pinned    []string // node-local PVCs with persistent data that the pods mount
+	ZeroScale bool     // managed by zero-scale platform
+}
+
+func isZeroScaleServiceName(svc string) bool {
+	return svc == "zero-scale-gateway" ||
+		strings.HasPrefix(svc, "oauth2-proxy-") ||
+		svc == "shared-mysql" ||
+		svc == "shared-redis"
+}
+
+func isZeroScaleIngress(ing object) bool {
+	name := ing.str("metadata", "name")
+	if strings.HasPrefix(name, "zero-scale-") {
+		return true
+	}
+	if labels, ok := ing.get("metadata", "labels").(map[string]any); ok {
+		if labels["zero-scale-app"] == "true" || labels["app.kubernetes.io/part-of"] == "zero-scale-platform" {
+			return true
+		}
+	}
+	if ann, ok := ing.get("metadata", "annotations").(map[string]any); ok {
+		if ann["zero-scale-oauth-setup"] != nil || ann["zero-scale-type"] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isZeroScaleService(s object) bool {
+	name := s.str("metadata", "name")
+	if isZeroScaleServiceName(name) {
+		return true
+	}
+	if labels, ok := s.get("metadata", "labels").(map[string]any); ok {
+		if labels["app"] == "zero-scale-gateway" || labels["zero-scale-app"] == "true" || labels["app.kubernetes.io/part-of"] == "zero-scale-platform" {
+			return true
+		}
+	}
+	return false
 }
 
 // Survives reports whether the Service keeps serving when any one node is lost.
@@ -71,6 +110,7 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 	byKey := map[string]*Exposure{}
 	for _, ing := range ingresses {
 		ns := ing.str("metadata", "namespace")
+		ingZero := isZeroScaleIngress(ing)
 		add := func(svc, host string) {
 			if svc == "" {
 				return
@@ -78,8 +118,10 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 			key := ns + "/" + svc
 			e := byKey[key]
 			if e == nil {
-				e = &Exposure{Namespace: ns, Service: svc}
+				e = &Exposure{Namespace: ns, Service: svc, ZeroScale: isZeroScaleServiceName(svc) || ingZero}
 				byKey[key] = e
+			} else if ingZero {
+				e.ZeroScale = true
 			}
 			if host != "" && !hasHost(e.Hosts, host) {
 				e.Hosts = append(e.Hosts, host)
@@ -95,13 +137,17 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 
 	selectors := map[string]map[string]string{}
 	for _, s := range services {
+		key := s.str("metadata", "namespace") + "/" + s.str("metadata", "name")
+		if e := byKey[key]; e != nil && isZeroScaleService(s) {
+			e.ZeroScale = true
+		}
 		sel := map[string]string{}
 		if m, ok := s.get("spec", "selector").(map[string]any); ok {
 			for k, v := range m {
 				sel[k], _ = v.(string)
 			}
 		}
-		selectors[s.str("metadata", "namespace")+"/"+s.str("metadata", "name")] = sel
+		selectors[key] = sel
 	}
 
 	for key, e := range byKey {
@@ -175,6 +221,7 @@ type IPClaim struct {
 	IP        string
 	Node      string
 	Ports     []int
+	ZeroScale bool
 }
 
 // NodeIPClaims lists Services that capture traffic addressed to a node IP.
@@ -204,7 +251,13 @@ func NodeIPClaims(k Kube) ([]IPClaim, error) {
 			if !ok {
 				continue
 			}
-			c := IPClaim{Namespace: s.str("metadata", "namespace"), Service: s.str("metadata", "name"), IP: ip, Node: node}
+			c := IPClaim{
+				Namespace: s.str("metadata", "namespace"),
+				Service:   s.str("metadata", "name"),
+				IP:        ip,
+				Node:      node,
+				ZeroScale: isZeroScaleService(s),
+			}
 			for _, p := range s.list("spec", "ports") {
 				if f, ok := p.get("port").(float64); ok {
 					c.Ports = append(c.Ports, int(f))
@@ -223,6 +276,7 @@ func NodeIPClaims(k Kube) ([]IPClaim, error) {
 type RouteConflict struct {
 	Host, Path string
 	Routes     []string // namespace/ingress -> service
+	ZeroScale  bool
 }
 
 // RouteConflicts lists host+path pairs routed to different backends by more than
@@ -232,10 +286,14 @@ func RouteConflicts(k Kube) ([]RouteConflict, error) {
 	if err != nil {
 		return nil, err
 	}
-	type route struct{ ingress, service string }
+	type route struct {
+		ingress, service string
+		zeroScale        bool
+	}
 	byRoute := map[[2]string][]route{}
 	for _, ing := range ingresses {
 		ns := ing.str("metadata", "namespace")
+		ingZero := isZeroScaleIngress(ing)
 		for _, rule := range ing.list("spec", "rules") {
 			host := strings.ToLower(rule.str("host"))
 			for _, p := range rule.list("http", "paths") {
@@ -244,20 +302,30 @@ func RouteConflicts(k Kube) ([]RouteConflict, error) {
 					path = "/"
 				}
 				key := [2]string{host, path}
-				byRoute[key] = append(byRoute[key], route{ns + "/" + ing.str("metadata", "name"), ns + "/" + p.str("backend", "service", "name")})
+				svc := p.str("backend", "service", "name")
+				zs := ingZero || isZeroScaleServiceName(svc)
+				byRoute[key] = append(byRoute[key], route{
+					ingress:   ns + "/" + ing.str("metadata", "name"),
+					service:   ns + "/" + svc,
+					zeroScale: zs,
+				})
 			}
 		}
 	}
 	var out []RouteConflict
 	for key, routes := range byRoute {
 		services := map[string]bool{}
+		zs := false
 		for _, r := range routes {
 			services[r.service] = true
+			if r.zeroScale {
+				zs = true
+			}
 		}
 		if len(services) < 2 {
 			continue
 		}
-		c := RouteConflict{Host: key[0], Path: key[1]}
+		c := RouteConflict{Host: key[0], Path: key[1], ZeroScale: zs}
 		for _, r := range routes {
 			c.Routes = append(c.Routes, r.ingress+" -> "+r.service)
 		}

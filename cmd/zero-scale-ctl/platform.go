@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -238,23 +239,158 @@ func runMySQL(t *platform.DBTarget, op *platform.Operator, sql string) error {
 	return err
 }
 
+// DoctorFilter restricts doctor output to a specific environment, namespace, or zero-scale apps.
+type DoctorFilter struct {
+	Env           string
+	Namespace     string
+	ZeroScaleOnly bool
+}
+
+func (f DoctorFilter) Active() bool {
+	return f.Env != "" || f.Namespace != "" || f.ZeroScaleOnly
+}
+
+func resolveEnvNamespace(k platform.Kube, envName string) (string, error) {
+	if envName == "" {
+		return "", nil
+	}
+	raw, err := k.GetJSON("get", "namespace", "-l", env.Label+"="+envName)
+	if err == nil {
+		var list struct {
+			Items []struct {
+				Metadata struct {
+					Name string `json:"name"`
+				} `json:"metadata"`
+			} `json:"items"`
+		}
+		if json.Unmarshal(raw, &list) == nil && len(list.Items) > 0 {
+			return list.Items[0].Metadata.Name, nil
+		}
+	}
+	return envName, nil
+}
+
+func filterDBCandidates(cands []platform.DBCandidate, f DoctorFilter, activeTarget *platform.DBTarget) []platform.DBCandidate {
+	if !f.Active() {
+		return cands
+	}
+	var out []platform.DBCandidate
+	for _, c := range cands {
+		match := true
+		if f.Namespace != "" {
+			match = (c.Namespace == f.Namespace) || (activeTarget != nil && c.Namespace == activeTarget.Namespace && c.Name == activeTarget.Name)
+		}
+		if match && f.ZeroScaleOnly {
+			isZS := c.Operator == "shared-mysql" ||
+				(activeTarget != nil && c.Namespace == activeTarget.Namespace && c.Name == activeTarget.Name) ||
+				c.Namespace == platformNamespace()
+			if !isZS {
+				match = false
+			}
+		}
+		if match {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func filterGateways(gws []platform.Gateway, f DoctorFilter) []platform.Gateway {
+	if f.Namespace == "" {
+		return gws
+	}
+	var out []platform.Gateway
+	for _, g := range gws {
+		if g.Namespace == f.Namespace {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func filterRedis(redis []string, f DoctorFilter) []string {
+	if f.Namespace == "" {
+		return redis
+	}
+	var out []string
+	for _, r := range redis {
+		if strings.Contains(r, "."+f.Namespace+".") || strings.HasPrefix(r, f.Namespace+"/") {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------- doctor / init
 
 func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	envFlag := fs.String("env", "", "Filter diagnostics to a specific environment name")
+	envShort := fs.String("e", "", "Filter diagnostics to a specific environment name (shorthand)")
+	nsFlag := fs.String("namespace", "", "Filter diagnostics to a specific namespace")
+	nsShort := fs.String("n", "", "Filter diagnostics to a specific namespace (shorthand)")
+	zsFlag := fs.Bool("zero-scale-only", false, "Diagnose zero-scale managed apps only (hide third-party workloads)")
+	zsShort := fs.Bool("z", false, "Diagnose zero-scale managed apps only (shorthand)")
+	appsFlag := fs.Bool("apps-only", false, "Diagnose zero-scale managed apps only (alias)")
 	_ = fs.Parse(args)
 
-	r, err := platform.Detect(kubectlKube{})
+	kube := kubectlKube{}
+	envName := *envFlag
+	if envName == "" {
+		envName = *envShort
+	}
+	targetNS := *nsFlag
+	if targetNS == "" {
+		targetNS = *nsShort
+	}
+	if envName != "" && targetNS == "" {
+		ns, err := resolveEnvNamespace(kube, envName)
+		if err != nil {
+			return err
+		}
+		targetNS = ns
+	}
+
+	filter := DoctorFilter{
+		Env:           envName,
+		Namespace:     targetNS,
+		ZeroScaleOnly: *zsFlag || *zsShort || *appsFlag,
+	}
+
+	r, err := platform.Detect(kube)
 	if err != nil {
 		return err
 	}
-	printReport(r)
-	printNodeFailure(r)
+
+	if filter.Active() {
+		var parts []string
+		if filter.Env != "" {
+			if filter.Namespace != "" && filter.Namespace != filter.Env {
+				parts = append(parts, fmt.Sprintf("environment %q (namespace %s)", filter.Env, filter.Namespace))
+			} else {
+				parts = append(parts, fmt.Sprintf("environment %q", filter.Env))
+			}
+		} else if filter.Namespace != "" {
+			parts = append(parts, fmt.Sprintf("namespace %q", filter.Namespace))
+		}
+		if filter.ZeroScaleOnly {
+			parts = append(parts, "zero-scale managed apps only")
+		}
+		fmt.Printf("==> Scope: %s\n\n", strings.Join(parts, ", "))
+	}
+
+	printReport(r, filter)
+	printNodeFailure(r, filter)
 
 	fmt.Println("\n==> Next steps")
 	current, _ := loadPlatform()
 	if current != nil {
 		fmt.Printf("    Platform config exists in %s/%s. Re-run 'zero-scale-ctl init' to refresh it.\n", platformNamespace(), platform.ConfigMapName)
+	}
+	if filter.Namespace != "" && filter.Namespace != platformNamespace() {
+		if e, _ := loadEnv(filter.Namespace); e != nil {
+			fmt.Printf("    Environment config exists in %s/%s.\n", filter.Namespace, env.ConfigMapName)
+		}
 	}
 	_, chooseErr := platform.Choose(r, recordedOptions(current))
 	switch e := chooseErr.(type) {
@@ -274,8 +410,13 @@ func runDoctor(args []string) error {
 	default:
 		fmt.Printf("    %v\n", e)
 	}
-	if len(r.Gateways) == 0 {
-		fmt.Println("    No zero-scale gateway found: 'zero-scale-ctl gateway install' (or deploy your Helm chart).")
+	gws := filterGateways(r.Gateways, filter)
+	if len(gws) == 0 {
+		if filter.Namespace != "" {
+			fmt.Printf("    No zero-scale gateway found in namespace %s: 'zero-scale-ctl gateway install --namespace %s'.\n", filter.Namespace, filter.Namespace)
+		} else {
+			fmt.Println("    No zero-scale gateway found: 'zero-scale-ctl gateway install' (or deploy your Helm chart).")
+		}
 	}
 	return nil
 }
@@ -298,7 +439,7 @@ func recordedOptions(c *platform.Config) platform.Options {
 
 // printNodeFailure lists what one node going down would take off the air, and
 // Services that hijack a node's IP so that node cannot serve ingress traffic.
-func printNodeFailure(r *platform.Report) {
+func printNodeFailure(r *platform.Report, filter DoctorFilter) {
 	fmt.Println("\n==> Single node failure")
 	var defaults []string
 	for _, sc := range r.StorageClasses {
@@ -320,6 +461,12 @@ func printNodeFailure(r *platform.Report) {
 		fmt.Printf("    (could not check node-local volumes: %v)\n", err)
 	}
 	for _, v := range locals {
+		if filter.Namespace != "" && v.Namespace != filter.Namespace {
+			continue
+		}
+		if filter.ZeroScaleOnly && !v.ZeroScale {
+			continue
+		}
 		where := fmt.Sprintf("%s/%s (%s, on %s, used by %s)", v.Namespace, v.PVC, v.Class, strings.Join(v.Nodes, ", "), strings.Join(v.Pods, ", "))
 		switch {
 		case v.Temporary:
@@ -336,17 +483,40 @@ func printNodeFailure(r *platform.Report) {
 		fmt.Printf("    (could not check Ingress routes: %v)\n", err)
 	}
 	for _, c := range conflicts {
+		if filter.ZeroScaleOnly && !c.ZeroScale {
+			continue
+		}
+		if filter.Namespace != "" {
+			nsMatch := false
+			for _, routeStr := range c.Routes {
+				if strings.HasPrefix(routeStr, filter.Namespace+"/") {
+					nsMatch = true
+					break
+				}
+			}
+			if !nsMatch {
+				continue
+			}
+		}
 		fmt.Printf("    ⚠️  %s%s is routed by several Ingresses to different Services; only one wins: %s\n", c.Host, c.Path, strings.Join(c.Routes, "; "))
 	}
-	knativeOnly, _ := platform.KnativeOnlyHosts(kubectlKube{})
-	for _, h := range knativeOnly {
-		fmt.Printf("    ⚠️  %s is a Knative DomainMapping with no Ingress rule: it only answers on the Knative gateway's own address, not on every node.\n", h)
+	if !filter.ZeroScaleOnly && filter.Namespace == "" {
+		knativeOnly, _ := platform.KnativeOnlyHosts(kubectlKube{})
+		for _, h := range knativeOnly {
+			fmt.Printf("    ⚠️  %s is a Knative DomainMapping with no Ingress rule: it only answers on the Knative gateway's own address, not on every node.\n", h)
+		}
 	}
 	claims, err := platform.NodeIPClaims(kubectlKube{})
 	if err != nil {
 		fmt.Printf("    (could not check Service externalIPs: %v)\n", err)
 	}
 	for _, c := range claims {
+		if filter.Namespace != "" && c.Namespace != filter.Namespace {
+			continue
+		}
+		if filter.ZeroScaleOnly && !c.ZeroScale {
+			continue
+		}
 		fmt.Printf("    ❌ %s/%s claims %s (node %s) on ports %v: that node's ingress on those ports goes to this Service instead.\n", c.Namespace, c.Service, c.IP, c.Node, c.Ports)
 	}
 	exps, err := platform.IngressExposures(kubectlKube{})
@@ -354,18 +524,40 @@ func printNodeFailure(r *platform.Report) {
 		fmt.Printf("    (could not check Ingress backends: %v)\n", err)
 		return
 	}
-	ok := 0
+	var filteredExps []platform.Exposure
 	for _, e := range exps {
+		if filter.Namespace != "" && e.Namespace != filter.Namespace {
+			continue
+		}
+		if filter.ZeroScaleOnly && !e.ZeroScale {
+			continue
+		}
+		filteredExps = append(filteredExps, e)
+	}
+	ok := 0
+	for _, e := range filteredExps {
 		if e.Survives() {
 			ok++
 			continue
 		}
 		fmt.Printf("    ❌ %s/%s: %s (%s)\n", e.Namespace, e.Service, e.Problem(), strings.Join(e.Hosts, ", "))
 	}
-	fmt.Printf("    %d of %d Ingress backends survive losing any one node.\n", ok, len(exps))
+	var scopeDesc string
+	if filter.Env != "" && filter.ZeroScaleOnly {
+		scopeDesc = fmt.Sprintf(" (environment %q, zero-scale managed apps)", filter.Env)
+	} else if filter.Env != "" {
+		scopeDesc = fmt.Sprintf(" (environment %q)", filter.Env)
+	} else if filter.Namespace != "" && filter.ZeroScaleOnly {
+		scopeDesc = fmt.Sprintf(" (namespace %s, zero-scale managed apps)", filter.Namespace)
+	} else if filter.Namespace != "" {
+		scopeDesc = fmt.Sprintf(" (namespace %s)", filter.Namespace)
+	} else if filter.ZeroScaleOnly {
+		scopeDesc = " (zero-scale managed apps)"
+	}
+	fmt.Printf("    %d of %d Ingress backends survive losing any one node%s.\n", ok, len(filteredExps), scopeDesc)
 }
 
-func printReport(r *platform.Report) {
+func printReport(r *platform.Report, filter DoctorFilter) {
 	mark := func(g platform.Grade) string {
 		switch g {
 		case platform.HA:
@@ -392,16 +584,43 @@ func printReport(r *platform.Report) {
 		}
 		fmt.Printf("    %s %-24s %-32s %s%s\n", mark(sc.Grade), sc.Name, sc.Provisioner, sc.Reason, extra)
 	}
+
+	var activePG, activeMY *platform.DBTarget
+	if filter.Namespace != "" {
+		if p, _ := loadPlatformFor(filter.Namespace); p != nil {
+			activePG = p.Postgres
+			activeMY = p.MySQL
+		}
+	} else if filter.ZeroScaleOnly {
+		if p, _ := loadPlatform(); p != nil {
+			activePG = p.Postgres
+			activeMY = p.MySQL
+		}
+	}
+
 	for _, sec := range []struct {
-		title string
-		cands []platform.DBCandidate
-	}{{"PostgreSQL clusters", r.Postgres}, {"MySQL clusters", r.MySQL}} {
+		title  string
+		cands  []platform.DBCandidate
+		target *platform.DBTarget
+	}{
+		{"PostgreSQL clusters", r.Postgres, activePG},
+		{"MySQL clusters", r.MySQL, activeMY},
+	} {
 		fmt.Printf("\n==> %s\n", sec.title)
-		if len(sec.cands) == 0 {
+		cands := filterDBCandidates(sec.cands, filter, sec.target)
+		if len(cands) == 0 {
 			fmt.Println("    (none)")
 		}
-		for _, c := range sec.cands {
-			fmt.Printf("    %s %-32s %s, ready: %s, rw: %s\n", mark(c.Grade), c.Ref(), c.Reason, c.Ready, c.RWService)
+		for _, c := range cands {
+			note := ""
+			if sec.target != nil && c.Namespace == sec.target.Namespace && c.Name == sec.target.Name {
+				if filter.Env != "" {
+					note = fmt.Sprintf(" [target for env %s]", filter.Env)
+				} else if filter.Namespace != "" {
+					note = fmt.Sprintf(" [target for %s]", filter.Namespace)
+				}
+			}
+			fmt.Printf("    %s %-32s %s, ready: %s, rw: %s%s\n", mark(c.Grade), c.Ref(), c.Reason, c.Ready, c.RWService, note)
 		}
 	}
 	fmt.Println("\n==> Ingress classes")
@@ -416,18 +635,20 @@ func printReport(r *platform.Report) {
 		fmt.Printf("    %-24s %s%s\n", ic.Name, ic.Controller, def)
 	}
 	fmt.Println("\n==> Zero-scale gateways")
-	if len(r.Gateways) == 0 {
+	gws := filterGateways(r.Gateways, filter)
+	if len(gws) == 0 {
 		fmt.Println("    (none)")
 	}
-	for _, g := range r.Gateways {
+	for _, g := range gws {
 		by := g.ManagedBy
 		if by == "" {
 			by = "unmanaged"
 		}
 		fmt.Printf("    %s %s/%s %d/%d ready, managed by %s\n", mark(g.Grade), g.Namespace, g.Name, g.Ready, g.Replicas, by)
 	}
-	if len(r.Redis) > 0 {
-		fmt.Printf("\n==> Redis\n    %s\n", strings.Join(r.Redis, "\n    "))
+	redis := filterRedis(r.Redis, filter)
+	if len(redis) > 0 {
+		fmt.Printf("\n==> Redis\n    %s\n", strings.Join(redis, "\n    "))
 	}
 	for _, w := range r.Warnings {
 		fmt.Printf("\n⚠️  %s\n", w)

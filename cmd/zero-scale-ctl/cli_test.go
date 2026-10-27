@@ -114,6 +114,106 @@ func TestDoctorReportsSingleNodeFailures(t *testing.T) {
 	}
 }
 
+func TestDoctorZeroScaleOnly(t *testing.T) {
+	fakeKubectl(t, `  "get ingress -A -o json") cat "$F/spof/ingress.json" ;;
+  "get service -A -o json") cat "$F/spof/service.json" ;;
+  "get pods -A -o json") cat "$F/spof/pods.json" ;;
+  "get nodes -o json") cat "$F/spof/nodes.json" ;;
+  "get storageclass -o json") cat "$F/spof/storageclass.json" ;;
+  "get pvc -A -o json") cat "$F/spof/pvc.json" ;;
+  "get domainmappings.serving.knative.dev -A -o json") cat "$F/spof/domainmappings.serving.knative.dev.json" ;;`)
+	out := captureStdout(t, func() {
+		if err := runDoctor([]string{"--zero-scale-only"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "==> Scope: zero-scale managed apps only") {
+		t.Errorf("missing scope header in:\n%s", out)
+	}
+	if !strings.Contains(out, "default/zero-scale-gateway: 1 pod, on steve-disks") {
+		t.Errorf("missing zero-scale-gateway in:\n%s", out)
+	}
+	if !strings.Contains(out, "default/oauth2-proxy-mdm: 2 pods, all on sv2d") {
+		t.Errorf("missing oauth2-proxy-mdm in:\n%s", out)
+	}
+	if !strings.Contains(out, "1 of 3 Ingress backends survive losing any one node (zero-scale managed apps).") {
+		t.Errorf("missing zero-scale survival count in:\n%s", out)
+	}
+	for _, unwanted := range []string{
+		"nextcloud/nextcloud",
+		"hopscotch-admin",
+		"prometheus-server",
+		"datadir-qa-pxc-pxc",
+		"kourier-system",
+		"Knative DomainMapping",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor --zero-scale-only included third-party workload %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestDoctorEnvFilter(t *testing.T) {
+	fakeKubectl(t, `  "get ingress -A -o json") cat "$F/spof/ingress.json" ;;
+  "get service -A -o json") cat "$F/spof/service.json" ;;
+  "get pods -A -o json") cat "$F/spof/pods.json" ;;
+  "get nodes -o json") cat "$F/spof/nodes.json" ;;
+  "get storageclass -o json") cat "$F/spof/storageclass.json" ;;
+  "get pvc -A -o json") cat "$F/spof/pvc.json" ;;
+  "get domainmappings.serving.knative.dev -A -o json") cat "$F/spof/domainmappings.serving.knative.dev.json" ;;`)
+	out := captureStdout(t, func() {
+		if err := runDoctor([]string{"--env", "qa"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, `==> Scope: environment "qa"`) {
+		t.Errorf("missing scope header in:\n%s", out)
+	}
+	if !strings.Contains(out, "1 of 1 Ingress backends survive losing any one node (environment \"qa\").") {
+		t.Errorf("missing qa survival count in:\n%s", out)
+	}
+	for _, unwanted := range []string{
+		"default/zero-scale-gateway",
+		"nextcloud/nextcloud",
+		"default/prometheus-server",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor --env qa included non-qa workload %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+func TestDoctorEnvAndZeroScaleOnly(t *testing.T) {
+	fakeKubectl(t, `  "get ingress -A -o json") cat "$F/spof/ingress.json" ;;
+  "get service -A -o json") cat "$F/spof/service.json" ;;
+  "get pods -A -o json") cat "$F/spof/pods.json" ;;
+  "get nodes -o json") cat "$F/spof/nodes.json" ;;
+  "get storageclass -o json") cat "$F/spof/storageclass.json" ;;
+  "get pvc -A -o json") cat "$F/spof/pvc.json" ;;
+  "get domainmappings.serving.knative.dev -A -o json") cat "$F/spof/domainmappings.serving.knative.dev.json" ;;`)
+	out := captureStdout(t, func() {
+		if err := runDoctor([]string{"-e", "default", "-z"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, `==> Scope: environment "default", zero-scale managed apps only`) {
+		t.Errorf("missing scope header in:\n%s", out)
+	}
+	if !strings.Contains(out, "0 of 2 Ingress backends survive losing any one node (environment \"default\", zero-scale managed apps).") {
+		t.Errorf("missing combined survival count in:\n%s", out)
+	}
+	for _, unwanted := range []string{
+		"qa/zero-scale-gateway",
+		"nextcloud",
+		"prometheus-server",
+		"hopscotch-admin",
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor -e default -z included unwanted workload %q:\n%s", unwanted, out)
+		}
+	}
+}
+
 func TestProvisionPostgresUsesPlatformTarget(t *testing.T) {
 	cm := `{"data":{"version":"1","postgres.operator":"cnpg","postgres.cluster":"cnpg-system/ha-postgres","postgres.rwService":"ha-postgres-rw.cnpg-system.svc.cluster.local:5432"}}`
 	log := fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+cm+`' ;;
