@@ -7,6 +7,7 @@ import (
 
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/volumes"
 )
 
 func runDeleteApp(args []string, namespace string) error {
@@ -14,12 +15,13 @@ func runDeleteApp(args []string, namespace string) error {
 	fs := flag.NewFlagSet("delete-app", flag.ExitOnError)
 	purge := fs.Bool("purge", false, "Also remove the Ingress, Secrets, DB config, host symlinks and OAuth routes, and stop the app on every replica")
 	dropDB := fs.Bool("drop-database", false, "With --purge: drop the app's database and user (Postgres only drops databases this tool created)")
+	delVols := fs.Bool("delete-volumes", false, "With --purge: delete the app's persistent volume data under /srv/zero-scale-volumes")
 	_ = fs.Parse(rest)
 	if name == "" {
-		return fmt.Errorf("usage: zero-scale-ctl delete-app <name|host> [--purge [--drop-database]]")
+		return fmt.Errorf("usage: zero-scale-ctl delete-app <name|host> [--purge [--drop-database] [--delete-volumes]]")
 	}
-	if *dropDB && !*purge {
-		return fmt.Errorf("--drop-database requires --purge")
+	if (*dropDB || *delVols) && !*purge {
+		return fmt.Errorf("--drop-database and --delete-volumes require --purge")
 	}
 
 	cmName := name
@@ -66,6 +68,23 @@ func runDeleteApp(args []string, namespace string) error {
 			}
 			fmt.Println("--> Removed host entries from /opt/apps (the binary itself is kept; other apps may share it)")
 		}
+	}
+
+	if *delVols {
+		if !appname.Valid(appName) {
+			return fmt.Errorf("refusing to delete volumes for unexpected app name %q", appName)
+		}
+		pod, err := GetGatewayPod(namespace)
+		if err != nil {
+			return fmt.Errorf("deleting volumes: %w", err)
+		}
+		dir := volumes.AppDir(volumes.DefaultRoot, appName)
+		if _, err := ExecPod(pod, namespace, "systemd-runner", []string{"rm", "-rf", "--one-file-system", dir}, ""); err != nil {
+			return fmt.Errorf("deleting %s: %w", dir, err)
+		}
+		fmt.Printf("--> Deleted volume data %s\n", dir)
+	} else if data["volumes"] != "" {
+		fmt.Printf("--> Kept volume data under %s (use --delete-volumes to remove it)\n", volumes.AppDir(volumes.DefaultRoot, appName))
 	}
 
 	if *dropDB {

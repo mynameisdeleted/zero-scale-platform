@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/volumes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,6 +204,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 				hostnames = append(hostnames, val)
 			} else if currentList == "config_file" || currentList == "config_files" || currentList == "configs" || currentList == "config" {
 				configFiles = append(configFiles, val)
+			} else if currentSection == "volumes" || currentSection == "mounts" || currentList == "volumes" || currentList == "mounts" {
+				mounts = strings.TrimSpace(mounts + " " + val)
 			} else if currentSection == "secrets" || currentList == "secrets" || currentList == "secret" {
 				if strings.Contains(val, ":") {
 					sp := strings.SplitN(val, ":", 2)
@@ -303,8 +306,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 					} else {
 						launcherLines = append(launcherLines, v)
 					}
-				case "mounts":
-					mounts = v
+				case "mounts", "volumes":
+					mounts = strings.TrimSpace(mounts + " " + v)
 				case "scale_to_zero":
 					scaleToZero = strings.ToLower(v) != "false"
 				case "idle_timeout", "idle-timeout", "timeout":
@@ -404,13 +407,18 @@ func LoadConfig(filePath string) (interface{}, error) {
 		resolvedConfigFiles = append(resolvedConfigFiles, resolvedPath)
 	}
 
+	vols, err := volumes.Parse(mounts)
+	if err != nil {
+		return nil, fmt.Errorf("volumes: %w", err)
+	}
+
 	return &AppConfig{
 		Hostnames:   hostnames,
 		BinaryPath:  binaryPath,
 		Database:    dbCfg,
 		Redis:       redisCfg,
 		Gateway:     gatewayCfg,
-		Mounts:      mounts,
+		Mounts:      volumes.Format(vols),
 		ScaleToZero: scaleToZero,
 		IdleTimeout: idleTimeout,
 		Args:        args,

@@ -372,7 +372,7 @@ func handleApply(configPath, expandPath, namespace string) error {
 		cmData["database_secret"] = app.SecretName()
 	}
 	if app.Mounts != "" {
-		cmData["mounts"] = app.Mounts
+		cmData["volumes"] = app.Mounts
 	}
 	if app.Args != "" {
 		cmData["args"] = app.Args

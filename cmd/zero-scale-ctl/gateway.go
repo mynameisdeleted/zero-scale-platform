@@ -81,6 +81,7 @@ func gatewayInstall(verb string, args []string) error {
 	replicas := fs.Int("replicas", 2, "Gateway replicas")
 	rwx := fs.String("rwx-class", "", "RWX StorageClass for /opt/apps (default: storage.rwxClass from the platform config)")
 	size := fs.String("volume-size", "5Gi", "Size of the /opt/apps volume")
+	dataSize := fs.String("volumes-size", "20Gi", "Size of the shared app-volumes PVC at /srv/zero-scale-volumes")
 	idle := fs.String("idle-timeout", "60s", "Default idle time before an app scales to zero")
 	yes := fs.Bool("yes", false, "Apply (otherwise only print the manifests)")
 	_ = fs.Parse(args)
@@ -111,13 +112,13 @@ func gatewayInstall(verb string, args []string) error {
 		rwxClass = p.Storage.RWXClass
 	}
 	manifest, err := platform.GatewayManifest(platform.GatewayOptions{
-		Namespace: *ns, Image: *image, Replicas: *replicas, RWXClass: rwxClass, VolumeSize: *size, IdleTimeout: *idle,
+		Namespace: *ns, Image: *image, Replicas: *replicas, RWXClass: rwxClass, VolumeSize: *size, DataSize: *dataSize, IdleTimeout: *idle,
 	})
 	if err != nil {
 		return err
 	}
 	steps := []platform.Step{
-		{Title: "Gateway ServiceAccount, RBAC, /opt/apps PVC, Deployment, Service and PodDisruptionBudget", Manifest: manifest},
+		{Title: "Gateway ServiceAccount, RBAC, /opt/apps and app-volumes PVCs, Deployment, Service and PodDisruptionBudget", Manifest: manifest},
 		{Title: "Wait for the rollout", Command: []string{"kubectl", "-n", *ns, "rollout", "status", "deployment/zero-scale-gateway", "--timeout=5m"}},
 	}
 	if *replicas < 2 {

@@ -21,6 +21,7 @@ func TestGatewayManifest(t *testing.T) {
 		"namespace: qa", "replicas: 2", "storageClassName: longhorn-ha-rwx", "image: registry/zs:1",
 		"kind: PodDisruptionBudget", "topologyKey: kubernetes.io/hostname", "fieldPath: metadata.namespace",
 		"app.kubernetes.io/managed-by: zero-scale-ctl",
+		"name: zero-scale-volumes-pvc", "storage: 20Gi", "mountPath: /srv/zero-scale-volumes",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("manifest missing %q", want)

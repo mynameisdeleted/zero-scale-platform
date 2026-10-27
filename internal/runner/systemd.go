@@ -2,6 +2,8 @@ package runner
 
 import (
 	"fmt"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/volumes"
 	"log"
 	"os"
 	"os/exec"
@@ -88,19 +90,50 @@ func StartTransientService(host string, port int, binaryPath, namespace string, 
 		fmt.Sprintf("--setenv=PORT=%d", port),
 	}
 
+	vols, err := volumes.Parse(appData["volumes"])
+	if err != nil {
+		return fmt.Errorf("app %s: %w", host, err)
+	}
+	appName := appname.Name(host)
+
 	// Dynamic user configuration (default: DynamicUser=yes, can be disabled via dynamic-user=false or user=<user>)
+	volumeOwner := ""
 	if appData != nil && (appData["dynamic-user"] == "false" || appData["dynamic_user"] == "false") {
 		if u := appData["user"]; u != "" {
 			baseArgs = append(baseArgs, "-p", "User="+u)
+			volumeOwner = u
 		}
 	} else if appData != nil && appData["user"] != "" {
 		baseArgs = append(baseArgs, "-p", "User="+appData["user"])
+		volumeOwner = appData["user"]
 	} else {
 		baseArgs = append(baseArgs, "-p", "DynamicUser=yes", "-p", "ProtectSystem=strict")
+		if len(vols) > 0 {
+			// A fixed dynamic user name per app, so its volumes keep one owner across restarts.
+			volumeOwner = "zs-" + appName
+			baseArgs = append(baseArgs, "-p", "User="+volumeOwner)
+		}
 	}
 
-	// Mount persistent volume if present
-	if _, err := os.Stat("/app/uploads"); err == nil {
+	// Persistent volumes: per-app subdirectories of the shared RWX volume.
+	if len(vols) > 0 {
+		root := os.Getenv("VOLUMES_ROOT")
+		if root == "" {
+			root = volumes.DefaultRoot
+		}
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return fmt.Errorf("app %s declares volumes but %s is not mounted in the gateway (redeploy it with 'zero-scale-ctl gateway upgrade')", host, root)
+		}
+		for _, v := range vols {
+			if err := os.MkdirAll(volumes.Source(root, appName, v), 0700); err != nil {
+				return fmt.Errorf("creating volume %s for %s: %w", v.Name, host, err)
+			}
+		}
+		for _, prop := range volumes.SystemdProperties(root, appName, volumeOwner, vols) {
+			baseArgs = append(baseArgs, "-p", prop)
+		}
+	} else if _, err := os.Stat("/app/uploads"); err == nil {
+		// Legacy: bind the gateway's /app/uploads when present and no volumes are declared
 		baseArgs = append(baseArgs, "-p", "BindPaths=/app/uploads:/app/uploads")
 	}
 
@@ -118,7 +151,7 @@ func StartTransientService(host string, port int, binaryPath, namespace string, 
 	if appData != nil {
 		// Set of internal platform configuration keys that should never be passed as process environment variables
 		ignoredKeys := map[string]bool{
-			"host": true, "hosts": true, "url": true, "type": true, "mounts": true,
+			"host": true, "hosts": true, "url": true, "type": true, "mounts": true, "volumes": true,
 			"scale-to-zero": true, "scale_to_zero": true,
 			"idle-timeout": true, "idle_timeout": true,
 			"database_configmap": true, "database_secret": true, "database_engine": true,

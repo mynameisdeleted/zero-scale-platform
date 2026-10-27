@@ -15,6 +15,7 @@ type GatewayOptions struct {
 	Replicas     int
 	RWXClass     string
 	VolumeSize   string
+	DataSize     string // size of the shared app-volumes PVC at /srv/zero-scale-volumes
 	IdleTimeout  string
 	ImagePullPol string
 }
@@ -33,6 +34,9 @@ func GatewayManifest(o GatewayOptions) (string, error) {
 	}
 	if o.VolumeSize == "" {
 		o.VolumeSize = "5Gi"
+	}
+	if o.DataSize == "" {
+		o.DataSize = "20Gi"
 	}
 	if o.IdleTimeout == "" {
 		o.IdleTimeout = "60s"
@@ -105,6 +109,23 @@ spec:
     requests:
       storage: %[5]s
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zero-scale-volumes-pvc
+  namespace: %[1]s
+  labels:
+    app: zero-scale-gateway
+    app.kubernetes.io/name: zero-scale-gateway
+    app.kubernetes.io/part-of: zero-scale-platform
+    app.kubernetes.io/managed-by: zero-scale-ctl
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: %[4]s
+  resources:
+    requests:
+      storage: %[8]s
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -165,6 +186,7 @@ spec:
             - {name: run, mountPath: /run}
             - {name: run-lock, mountPath: /run/lock}
             - {name: apps-volume, mountPath: /opt/apps}
+            - {name: app-data, mountPath: /srv/zero-scale-volumes}
       volumes:
         - name: run
           emptyDir: {medium: Memory}
@@ -173,6 +195,9 @@ spec:
         - name: apps-volume
           persistentVolumeClaim:
             claimName: zero-scale-binaries-pvc
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: zero-scale-volumes-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -207,7 +232,7 @@ spec:
   selector:
     matchLabels:
       app: zero-scale-gateway
-`, o.Namespace, o.Image, o.Replicas, o.RWXClass, o.VolumeSize, o.IdleTimeout, o.ImagePullPol), nil
+`, o.Namespace, o.Image, o.Replicas, o.RWXClass, o.VolumeSize, o.IdleTimeout, o.ImagePullPol, o.DataSize), nil
 }
 
 var hostRe = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)

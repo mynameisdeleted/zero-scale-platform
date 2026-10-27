@@ -58,3 +58,10 @@ func Hosts(data map[string]string) []string {
 	}
 	return out
 }
+
+var validName = regexp.MustCompile("^[a-z0-9]+$")
+
+// Valid reports whether s has the shape Name produces, so it is safe in paths and unit names.
+func Valid(s string) bool {
+	return validName.MatchString(s)
+}

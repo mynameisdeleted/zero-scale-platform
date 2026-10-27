@@ -27,7 +27,7 @@ graph TD
 1. **True Scale-to-Zero**: Idle apps consume **zero memory and zero CPU**.
 2. **Sub-Second Cold Starts**: Because apps launch as local native Linux processes via `systemd-run`, cold starts complete in **~500 ms** (warm requests respond in **~50–80 ms**).
 3. **Dynamic Credential Injection**: Automatically reads Kubernetes `ConfigMap` and `Secret` resources to pass database credentials (`DATABASE_HOST`, `DATABASE_USER`, `DATABASE_PASSWORD`, etc.) to the binary on startup.
-4. **Storage Integration**: Seamlessly bind-mounts Longhorn shared RWX volumes (e.g. `/app/uploads`) into the sandboxed process.
+4. **Storage Integration**: Each app can declare persistent `volumes:`; they live on a shared HA RWX volume (Longhorn or similar) and are bind-mounted into the sandboxed process.
 5. **Automated Idle Reaper**: Monitors application activity; after 15 minutes of inactivity, the gateway terminates the process and reclaims the ephemeral port.
 
 ---
@@ -109,6 +109,7 @@ OAuth, which needs its own annotations).
 zero-scale-ctl delete-app fdm                                  # ConfigMap only (previous behaviour)
 zero-scale-ctl delete-app fdm --purge                          # + Ingress, Secrets, host entries, OAuth routes; stops it on every replica
 zero-scale-ctl delete-app fdm --purge --drop-database          # + drops its database and user
+zero-scale-ctl delete-app fdm --purge --delete-volumes         # + deletes its persistent volume data
 ```
 
 ### Deploy an Application
@@ -136,6 +137,17 @@ The Zero-Scale Gateway requires a Read-Write-Many (RWX) or persistent volume mou
 - **Recommended Operator**: [Longhorn](https://longhorn.io/) (or CephFS, NFS, AWS EFS, OpenShift OCS/ODF).
 - **Default PVC**: `zero-scale-binaries-pvc` (configured in `deploy/deployment.yaml`).
 - **StorageClass**: Ensure your cluster has a default `StorageClass` or configure your specific class in your PVC definitions.
+
+#### Per-app volumes
+`zero-scale-ctl gateway install` also creates `zero-scale-volumes-pvc` (RWX, `--volumes-size`, default 20Gi), mounted in every gateway replica at `/srv/zero-scale-volumes`. An app asks for persistent directories in its config:
+
+```yaml
+volumes:
+  - data:/var/lib/notes        # name:/mount/path, read-write
+  - assets:/srv/assets:ro      # read-only
+```
+
+Each volume is the directory `/srv/zero-scale-volumes/<app>/<name>`, bind-mounted at the given path. Apps with volumes run as the fixed dynamic user `zs-<app>`, so the files keep one owner across restarts and replicas. The older `mounts: /path` form still works and is treated as a volume named after the last path element. Volume data survives `delete-app --purge` unless `--delete-volumes` is given. Because the volume is shared by every replica, an app that writes to it must tolerate a second copy of itself running on another replica (the ingress pins each host to one replica, but a failover can briefly run two).
 
 ### 2. PostgreSQL (CloudNativePG)
 <a id="postgresql-cloudnativepg"></a>
