@@ -1,0 +1,4 @@
+{"items":[
+ {"metadata":{"namespace":"cnpg-system","name":"ha-postgres"},"spec":{"instances":3},"status":{"readyInstances":3}},
+ {"metadata":{"namespace":"dev","name":"scratch"},"spec":{"instances":1},"status":{"readyInstances":1}}
+]}

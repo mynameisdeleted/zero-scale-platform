@@ -61,6 +61,21 @@ zero-scale-platform/
 
 The compiled `zero-scale-ctl` management CLI handles declarative deployment, database provisioning, binary synchronization, and OAuth2 security profiles:
 
+### Detect and Record the Platform
+```bash
+# Read-only: grade storage classes, Postgres/MySQL operators, ingress and gateways
+zero-scale-ctl doctor
+
+# Record the HA pieces in the zero-scale-platform ConfigMap (namespace zero-scale-system,
+# override with ZERO_SCALE_SYSTEM_NAMESPACE). Shows a diff and asks before writing.
+zero-scale-ctl init
+zero-scale-ctl init --storage-class longhorn --postgres cnpg-system/ha-postgres --mysql none --yes
+```
+`apply` and `provision-db` read the database clusters, Redis service and ingress class from that ConfigMap. Supported
+Postgres operators: CloudNativePG, Zalando, Crunchy PGO, Percona, StackGres. MySQL: Oracle MySQL Operator (InnoDB Cluster),
+Percona XtraDB Cluster, MariaDB Operator, and the legacy `shared-mysql` StatefulSet. Without the ConfigMap, the CLI falls
+back to the legacy `ha-postgres` / `shared-mysql` lookup and prints a warning.
+
 ### Deploy an Application
 ```bash
 # Reconcile an app from a simple declarative config file

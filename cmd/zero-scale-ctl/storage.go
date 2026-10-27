@@ -205,15 +205,10 @@ func DeployConfigFiles(app *AppConfig, namespace string, envMap map[string]strin
 		content = strings.ReplaceAll(content, "${PORT}", "8080")
 		content = strings.ReplaceAll(content, "${NAMESPACE}", namespace)
 
-		// Smart database fallbacks if specific variables were used in template
+		// Database fallbacks come from the provisioned <app>-db-config values, so they
+		// match whichever cluster the platform config points at.
 		if app.Database != nil {
-			engine := strings.ToLower(app.Database.Engine)
-			dbPort := "3306"
-			dbHost := fmt.Sprintf("shared-mysql.%s.svc.cluster.local", namespace)
-			if engine == "postgres" || engine == "postgresql" {
-				dbPort = "5432"
-				dbHost = fmt.Sprintf("ha-postgres-rw.%s.svc.cluster.local", namespace)
-			}
+			dbHost, dbPort := envMap["DATABASE_HOST"], envMap["DATABASE_PORT"]
 			content = strings.ReplaceAll(content, "${DATABASE_PORT}", dbPort)
 			content = strings.ReplaceAll(content, "${DATABASE_HOST}", dbHost)
 			if app.Database.EnvAddress != "" {

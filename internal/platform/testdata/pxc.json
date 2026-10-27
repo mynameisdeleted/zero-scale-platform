@@ -1,0 +1,1 @@
+{"items":[{"metadata":{"namespace":"databases","name":"mysql-ha"},"spec":{"pxc":{"size":3},"haproxy":{"enabled":true}},"status":{"state":"ready"}}]}

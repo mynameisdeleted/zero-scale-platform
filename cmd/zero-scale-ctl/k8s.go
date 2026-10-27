@@ -86,6 +86,11 @@ func GetConfigMapData(name, namespace string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return configMapDataFromJSON(out)
+}
+
+// configMapDataFromJSON extracts .data from `kubectl get configmap -o json` output.
+func configMapDataFromJSON(out string) (map[string]string, error) {
 	var raw struct {
 		Data map[string]string `json:"data"`
 	}
@@ -188,12 +193,16 @@ metadata:
 }
 
 // resolveIngressClass returns the desired IngressClass name, or empty string to use cluster default.
+// Precedence: $INGRESS_CLASS, then ingress.class in the platform ConfigMap, then "public" (microk8s).
 func resolveIngressClass() string {
 	if cls := os.Getenv("INGRESS_CLASS"); cls != "" {
 		if cls == "none" || cls == "-" || cls == "default" {
 			return ""
 		}
 		return cls
+	}
+	if p, err := loadPlatform(); err == nil && p != nil && p.Ingress.Class != "" {
+		return p.Ingress.Class
 	}
 	return "public"
 }

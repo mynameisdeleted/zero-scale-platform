@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
 	"io"
 	"math/big"
 	"strings"
@@ -33,169 +34,56 @@ func GeneratePassword(length int) string {
 	return string(b)
 }
 
-// GetMySQLPod returns the running shared-mysql pod name.
-func GetMySQLPod(namespace string) (string, error) {
-	out, err := RunKubectl([]string{
-		"get", "pods", "-n", namespace,
-		"-l", "app=shared-mysql",
-		"--field-selector=status.phase=Running",
-		"-o", "jsonpath={.items[0].metadata.name}",
-	}, "")
-	pod := strings.TrimSpace(out)
-	if err != nil || pod == "" {
-		return "", fmt.Errorf(`shared-mysql operator pod is not running in namespace '%s'
---> Remediation: Deploy shared MySQL with: kubectl apply -f deploy/shared-data-services.yaml -n %s
---> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#mysql-and-redis`, namespace, namespace)
-	}
-	return pod, nil
-}
-
-// GetPostgresPod returns the primary CloudNativePG ha-postgres pod name.
-func GetPostgresPod(namespace string) (string, error) {
-	for _, ns := range []string{namespace, "cnpg-system"} {
-		out, err := RunKubectl([]string{
-			"get", "pods", "-n", ns,
-			"-l", "cnpg.io/cluster=ha-postgres,role=primary",
-			"--field-selector=status.phase=Running",
-			"-o", "jsonpath={.items[0].metadata.name}",
-		}, "")
-		pod := strings.TrimSpace(out)
-		if err == nil && pod != "" {
-			return pod, nil
-		}
-	}
-	return "", fmt.Errorf(`CloudNativePG PostgreSQL cluster ('ha-postgres') is not running in namespace '%s' or 'cnpg-system'
---> Remediation:
-    1. Deploy CloudNativePG via Open Cream Cheese:
-       https://git.fairfaxmedia.net/open-cream-cheese/open-cream-cheese
-    2. Or install directly:
-       kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/main/releases/cnpg-1.22.0.yaml
---> Documentation: https://git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform#postgresql-cloudnativepg`, namespace)
-}
-
-// ProvisionMySQL idempotently provisions schema and user on shared MySQL operator.
-func ProvisionMySQL(app *AppConfig, namespace string) (dbName, dbUser, dbPass, endpoint string, err error) {
-	pod, err := GetMySQLPod(namespace)
-	if err != nil {
-		return "", "", "", "", err
-	}
-
-	adminData, err := GetSecretData("shared-mysql-admin", namespace)
-	var rootPass string
-	if err != nil || adminData["MYSQL_ROOT_PASSWORD"] == "" {
-		// Auto-generate high-entropy root password and persist to Kubernetes Secret
-		rootPass = GeneratePassword(24)
-		if err := CreateOrUpdateSecret("shared-mysql-admin", namespace, map[string]string{
-			"MYSQL_ROOT_PASSWORD": rootPass,
-		}, map[string]string{
-			"app": "shared-mysql",
-			"app.kubernetes.io/part-of": "zero-scale-platform",
-		}); err != nil {
-			return "", "", "", "", fmt.Errorf("failed to auto-create 'shared-mysql-admin' secret: %w", err)
-		}
-	} else {
-		rootPass = adminData["MYSQL_ROOT_PASSWORD"]
-	}
-
-	// Reuse existing password from app Secret if already created
+// existingPassword reuses the app's current DB password so re-applying never rotates it.
+func existingPassword(app *AppConfig, namespace string) string {
 	existingSecret, _ := GetSecretData(app.SecretName(), namespace)
 	if app.Database.EnvPassword != "" && existingSecret[app.Database.EnvPassword] != "" {
-		dbPass = existingSecret[app.Database.EnvPassword]
-	} else if existingSecret["DATABASE_PASSWORD"] != "" {
-		dbPass = existingSecret["DATABASE_PASSWORD"]
-	} else {
-		dbPass = GeneratePassword(24)
+		return existingSecret[app.Database.EnvPassword]
 	}
-
-	dbName = app.DBName()
-	dbUser = app.DBUser()
-
-	// Check if database exists
-	checkSQL := fmt.Sprintf("SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s';", dbName)
-	checkOut, _ := ExecPod(pod, namespace, "", []string{
-		"mysql", "-u", "root", fmt.Sprintf("-p%s", rootPass), "-N", "-s", "-e", checkSQL,
-	}, "")
-
-	if strings.Contains(checkOut, dbName) {
-		fmt.Printf("--> Database schema '%s' already exists on %s.\n", dbName, pod)
-	} else {
-		fmt.Printf("--> Creating MySQL database schema '%s' on %s...\n", dbName, pod)
-		createSQL := fmt.Sprintf(`
-CREATE DATABASE IF NOT EXISTS `+"`%s`"+` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';
-ALTER USER '%s'@'%%' IDENTIFIED BY '%s';
-GRANT ALL PRIVILEGES ON `+"`%s`"+`.* TO '%s'@'%%';
-FLUSH PRIVILEGES;
-`, dbName, dbUser, dbPass, dbUser, dbPass, dbName, dbUser)
-		_, err = ExecPod(pod, namespace, "", []string{
-			"mysql", "-u", "root", fmt.Sprintf("-p%s", rootPass), "-e", createSQL,
-		}, "")
-		if err != nil {
-			return "", "", "", "", fmt.Errorf("failed to create database on MySQL: %w", err)
-		}
+	if existingSecret["DATABASE_PASSWORD"] != "" {
+		return existingSecret["DATABASE_PASSWORD"]
 	}
-
-	endpoint = fmt.Sprintf("shared-mysql.%s.svc.cluster.local:3306", namespace)
-	return dbName, dbUser, dbPass, endpoint, nil
+	return GeneratePassword(24)
 }
 
-// ProvisionPostgres idempotently provisions schema and user on CloudNativePG operator.
-func ProvisionPostgres(app *AppConfig, namespace string) (dbName, dbUser, dbPass, endpoint string, err error) {
-	pod, err := GetPostgresPod(namespace)
+// ProvisionMySQL idempotently provisions a schema and user on the configured MySQL cluster.
+func ProvisionMySQL(app *AppConfig, namespace string) (dbName, dbUser, dbPass string, target *platform.DBTarget, err error) {
+	target, op, err := resolveDBTarget("mysql", namespace)
 	if err != nil {
-		return "", "", "", "", err
+		return "", "", "", nil, err
 	}
+	dbPass = existingPassword(app, namespace)
+	dbName, dbUser = app.DBName(), app.DBUser()
 
-	existingSecret, _ := GetSecretData(app.SecretName(), namespace)
-	if app.Database.EnvPassword != "" && existingSecret[app.Database.EnvPassword] != "" {
-		dbPass = existingSecret[app.Database.EnvPassword]
-	} else if existingSecret["DATABASE_PASSWORD"] != "" {
-		dbPass = existingSecret["DATABASE_PASSWORD"]
-	} else {
-		dbPass = GeneratePassword(24)
-	}
-
-	dbName = app.DBName()
-	dbUser = app.DBUser()
-
-	createRoleSQL := fmt.Sprintf(`
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '%s') THEN
-    CREATE ROLE "%s" WITH LOGIN PASSWORD '%s';
-  ELSE
-    ALTER ROLE "%s" WITH PASSWORD '%s';
-  END IF;
-END
-$$;
-`, dbUser, dbUser, dbPass, dbUser, dbPass)
-
-	_, err = ExecPod(pod, namespace, "postgres", []string{
-		"psql", "-U", "postgres", "-c", createRoleSQL,
-	}, "")
+	sql, err := platform.MySQLProvisionSQL(dbName, dbUser, dbPass)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to create Postgres role: %w", err)
+		return "", "", "", nil, err
 	}
-
-	checkSQL := fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s';", dbName)
-	checkOut, _ := ExecPod(pod, namespace, "postgres", []string{
-		"psql", "-U", "postgres", "-tc", checkSQL,
-	}, "")
-
-	if strings.Contains(checkOut, "1") {
-		fmt.Printf("--> PostgreSQL database '%s' already exists on %s.\n", dbName, pod)
-	} else {
-		fmt.Printf("--> Creating PostgreSQL database '%s' on %s...\n", dbName, pod)
-		_, err = ExecPod(pod, namespace, "postgres", []string{
-			"psql", "-U", "postgres", "-c", fmt.Sprintf(`CREATE DATABASE "%s" OWNER "%s";`, dbName, dbUser),
-		}, "")
-		if err != nil {
-			return "", "", "", "", fmt.Errorf("failed to create Postgres database: %w", err)
-		}
+	fmt.Printf("--> Ensuring MySQL schema '%s' and user on %s (%s)...\n", dbName, target.Ref(), op.Display)
+	if err := runMySQL(target, op, sql); err != nil {
+		return "", "", "", nil, fmt.Errorf("failed to provision MySQL database: %w", err)
 	}
+	return dbName, dbUser, dbPass, target, nil
+}
 
-	endpoint = fmt.Sprintf("ha-postgres-rw.%s.svc.cluster.local:5432", namespace)
-	return dbName, dbUser, dbPass, endpoint, nil
+// ProvisionPostgres idempotently provisions a database and login role on the configured Postgres cluster.
+func ProvisionPostgres(app *AppConfig, namespace string) (dbName, dbUser, dbPass string, target *platform.DBTarget, err error) {
+	target, op, err := resolveDBTarget("postgres", namespace)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	dbPass = existingPassword(app, namespace)
+	dbName, dbUser = app.DBName(), app.DBUser()
+
+	sql, err := platform.PostgresProvisionSQL(dbName, dbUser, dbPass, app.Owner(namespace))
+	if err != nil {
+		return "", "", "", nil, err
+	}
+	fmt.Printf("--> Ensuring PostgreSQL database '%s' and role on %s (%s)...\n", dbName, target.Ref(), op.Display)
+	if err := runPostgres(target, op, sql); err != nil {
+		return "", "", "", nil, fmt.Errorf("failed to provision PostgreSQL database: %w", err)
+	}
+	return dbName, dbUser, dbPass, target, nil
 }
 
 // ProvisionDataLayer orchestrates database and Redis provisioning and populates k8s resources.
@@ -205,26 +93,21 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 
 	if app.Database != nil {
 		engine := strings.ToLower(app.Database.Engine)
-		var dbName, dbUser, dbPass, endpoint, hostOnly, portOnly string
+		var dbName, dbUser, dbPass string
+		var target *platform.DBTarget
 		var err error
 
 		if engine == "mysql" {
-			dbName, dbUser, dbPass, endpoint, err = ProvisionMySQL(app, namespace)
-			if err != nil {
-				return err
-			}
-			hostOnly = fmt.Sprintf("shared-mysql.%s.svc.cluster.local", namespace)
-			portOnly = "3306"
+			dbName, dbUser, dbPass, target, err = ProvisionMySQL(app, namespace)
 		} else if engine == "postgres" || engine == "postgresql" {
-			dbName, dbUser, dbPass, endpoint, err = ProvisionPostgres(app, namespace)
-			if err != nil {
-				return err
-			}
-			hostOnly = fmt.Sprintf("ha-postgres-rw.%s.svc.cluster.local", namespace)
-			portOnly = "5432"
+			dbName, dbUser, dbPass, target, err = ProvisionPostgres(app, namespace)
 		} else {
 			return fmt.Errorf("unsupported database engine '%s' (choose 'mysql' or 'postgres')", engine)
 		}
+		if err != nil {
+			return err
+		}
+		endpoint, hostOnly, portOnly := target.RWService, target.Host(), target.Port()
 
 		// Map environment variables requested by binary
 		if app.Database.EnvAddress != "" {
@@ -282,8 +165,10 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 
 	if app.Redis != nil {
 		redisEndpoint := fmt.Sprintf("shared-redis.%s.svc.cluster.local:6379", namespace)
-		redisHost := fmt.Sprintf("shared-redis.%s.svc.cluster.local", namespace)
-		redisPort := "6379"
+		if p, err := loadPlatform(); err == nil && p != nil && p.Redis != "" {
+			redisEndpoint = p.Redis
+		}
+		redisHost, redisPort, _ := strings.Cut(redisEndpoint, ":")
 
 		if app.Redis.EnvAddress != "" {
 			configMapData[app.Redis.EnvAddress] = redisEndpoint

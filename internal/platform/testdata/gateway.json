@@ -1,0 +1,1 @@
+{"items":[{"metadata":{"namespace":"default","name":"zero-scale-gateway","labels":{"app.kubernetes.io/managed-by":"Helm"}},"spec":{"replicas":2},"status":{"readyReplicas":2}}]}

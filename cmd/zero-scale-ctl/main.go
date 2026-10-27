@@ -16,6 +16,12 @@ func usage() {
 Usage:
   zero-scale-ctl [command] [options]
 
+Platform setup:
+  doctor             Detect HA storage, Postgres/MySQL operators, ingress and gateways (read-only)
+  init               Record the chosen platform pieces in the zero-scale-platform ConfigMap
+                     [--storage-class X] [--rwx-class Y] [--postgres ns/name|none] [--mysql ns/name|none]
+                     [--allow-non-ha] [--dry-run] [--yes]
+
 Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
   oauth-setup <name> Create or update a shared ingress-nginx OAuth2 setup profile
@@ -237,6 +243,18 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("✅ Shared OAuth2 setup '%s' configured and deployed!\n", setupName)
+
+	case "doctor":
+		if err := runDoctor(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "init":
+		if err := runInit(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "--help", "-h", "help":
 		usage()
