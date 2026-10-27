@@ -21,6 +21,11 @@ Platform setup:
   init               Record the chosen platform pieces in the zero-scale-platform ConfigMap
                      [--storage-class X] [--rwx-class Y] [--postgres ns/name|none] [--mysql ns/name|none]
                      [--allow-non-ha] [--dry-run] [--yes]
+  install longhorn   Install Longhorn and HA StorageClasses (prints the plan; applies with --yes)
+                     [--version V] [--backup-target URL --backup-secret S] [--make-default]
+  install postgres   Install CloudNativePG and a 3-instance cluster on the HA storage class
+                     [--name ha-postgres] [--namespace cnpg-system] [--instances 3] [--size 10Gi]
+                     [--storage-class X] [--cluster-only] [--version V]
 
 Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
@@ -246,6 +251,12 @@ func main() {
 
 	case "doctor":
 		if err := runDoctor(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "install":
+		if err := runInstall(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			os.Exit(1)
 		}

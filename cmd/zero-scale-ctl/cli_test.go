@@ -124,3 +124,39 @@ func TestProvisionMySQLKeepsAdminPasswordOffArgv(t *testing.T) {
 		t.Errorf("stdin = %v", stdin)
 	}
 }
+
+func TestInstallPostgresDryRunChangesNothing(t *testing.T) {
+	log := fakeKubectl(t, `  "get nodes -o json") cat "$F/nodes.json" ;;`)
+	if err := runInstall([]string{"postgres", "--storage-class", "longhorn-ha"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(readLog(t, log), "\n") {
+		if strings.HasPrefix(line, "kubectl ") && !strings.HasPrefix(line, "kubectl get ") {
+			t.Errorf("dry run made a change: %s", line)
+		}
+	}
+}
+
+func TestInstallPostgresAppliesAndRecords(t *testing.T) {
+	log := fakeKubectl(t, `  "get nodes -o json") cat "$F/nodes.json" ;;
+  "get crd clusters.postgresql.cnpg.io") exit 0 ;;
+  "wait "*|"-n cnpg-system wait "*) exit 0 ;;`)
+	if err := runInstall([]string{"postgres", "--storage-class", "longhorn-ha", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readLog(t, log)
+	for _, want := range []string{
+		"kind: Cluster",
+		"storageClass: longhorn-ha",
+		"podAntiAffinityType: preferred", // fixture has 2 schedulable nodes for 3 instances
+		`postgres.cluster: "cnpg-system/ha-postgres"`,
+		`postgres.rwService: "ha-postgres-rw.cnpg-system.svc.cluster.local:5432"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "helm") || strings.Contains(got, "cnpg-1.26.0.yaml") {
+		t.Errorf("operator already present, should not be reinstalled:\n%s", got)
+	}
+}

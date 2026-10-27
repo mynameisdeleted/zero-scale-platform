@@ -76,6 +76,19 @@ Postgres operators: CloudNativePG, Zalando, Crunchy PGO, Percona, StackGres. MyS
 Percona XtraDB Cluster, MariaDB Operator, and the legacy `shared-mysql` StatefulSet. Without the ConfigMap, the CLI falls
 back to the legacy `ha-postgres` / `shared-mysql` lookup and prints a warning.
 
+### Install Missing HA Pieces
+```bash
+# Print the plan (Helm if installed, otherwise the pinned release manifests); nothing changes without --yes
+zero-scale-ctl install longhorn
+zero-scale-ctl install longhorn --backup-target s3://bucket@us-east-1/ --backup-secret s3-creds --yes
+
+# CloudNativePG operator + a 3-instance cluster on the platform's HA block StorageClass
+zero-scale-ctl install postgres --yes
+zero-scale-ctl install postgres --cluster-only --namespace databases --name pg-main --size 50Gi --yes
+```
+Both commands update the `zero-scale-platform` ConfigMap when they finish. Longhorn needs `open-iscsi` and
+`nfs-common` on every node; if `longhornctl` is on PATH, the plan runs `longhornctl check preflight` first.
+
 ### Deploy an Application
 ```bash
 # Reconcile an app from a simple declarative config file

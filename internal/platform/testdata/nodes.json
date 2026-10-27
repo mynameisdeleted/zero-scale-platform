@@ -1,0 +1,7 @@
+{"items":[
+ {"metadata":{"name":"cp-1"},"spec":{"taints":[{"key":"node-role.kubernetes.io/control-plane","effect":"NoSchedule"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
+ {"metadata":{"name":"w-1"},"spec":{},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
+ {"metadata":{"name":"w-2"},"spec":{},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
+ {"metadata":{"name":"w-3"},"spec":{"unschedulable":true},"status":{"conditions":[{"type":"Ready","status":"True"}]}},
+ {"metadata":{"name":"w-4"},"spec":{},"status":{"conditions":[{"type":"Ready","status":"False"}]}}
+]}
