@@ -2,5 +2,8 @@
  {"metadata":{"namespace":"default","name":"zero-scale-fdm"},"spec":{"rules":[{"host":"fdm.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}},{"host":"hs.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}}]}},
  {"metadata":{"namespace":"qa","name":"zero-scale-mockqa"},"spec":{"rules":[{"host":"mock-qa.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}}]}},
  {"metadata":{"namespace":"default","name":"oauth"},"spec":{"rules":[{"host":"fdm.ffxm.cc","http":{"paths":[{"path":"/oauth2","backend":{"service":{"name":"oauth2-proxy-mdm"}}}]}}]}},
- {"metadata":{"namespace":"default","name":"ext"},"spec":{"defaultBackend":{"service":{"name":"external"}}}}
+ {"metadata":{"namespace":"default","name":"ext"},"spec":{"defaultBackend":{"service":{"name":"external"}}}},
+ {"metadata":{"namespace":"default","name":"hoppscotch-web"},"spec":{"rules":[{"host":"hopscotch.kube.fairfaxmedia.net","http":{"paths":[{"path":"/","backend":{"service":{"name":"hoppscotch-web"}}}]}},{"host":"hopscotch-admin.kube.fairfaxmedia.net","http":{"paths":[{"path":"/","backend":{"service":{"name":"hopscotch-admin"}}}]}}]}},
+ {"metadata":{"namespace":"default","name":"zero-scale-gateway"},"spec":{"rules":[{"host":"hopscotch.kube.fairfaxmedia.net","http":{"paths":[{"path":"/","backend":{"service":{"name":"zero-scale-gateway"}}}]}}]}},
+ {"metadata":{"namespace":"nextcloud","name":"nextcloud"},"spec":{"rules":[{"host":"nextcloud.kube.fairfaxmedia.net","http":{"paths":[{"backend":{"service":{"name":"nextcloud"}}}]}}]}}
 ]}

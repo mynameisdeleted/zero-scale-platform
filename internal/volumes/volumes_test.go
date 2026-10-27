@@ -31,6 +31,7 @@ func TestParseRejects(t *testing.T) {
 	for _, bad := range []string{
 		"uploads", "Up:/x", "x:relative", "x:/a/../b", "x:/etc", "x:/proc/1", "x:/opt/apps",
 		"x:/a:rx", "x:/a:ro:extra", "x:/a,x:/b", "x:/a,y:/a", "x:/a'b", "x:/srv/zero-scale-volumes",
+		"x:/var/lib/zero-scale-scratch", "x:/var/lib/zero-scale-scratch/y:tmp",
 	} {
 		if _, err := Parse(bad); err == nil {
 			t.Errorf("accepted %q", bad)
@@ -55,5 +56,29 @@ func TestSystemdProperties(t *testing.T) {
 	}
 	if p := SystemdProperties("/r", "fdm", "root", vols); strings.Contains(strings.Join(p, " "), "chown") {
 		t.Error("root needs no chown")
+	}
+}
+
+func TestTemporaryVolumes(t *testing.T) {
+	got, err := Parse("data:/var/lib/app, cache:/var/cache/app:tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Temporary || !got[1].Temporary || got[1].ReadOnly {
+		t.Fatalf("got %+v", got)
+	}
+	if Format(got) != "data:/var/lib/app,cache:/var/cache/app:tmp" {
+		t.Errorf("Format = %s", Format(got))
+	}
+	// Persistent data stays on the shared volume; :tmp goes to the pod's own disk.
+	if s := Source(DefaultRoot, "myapp", got[0]); s != "/srv/zero-scale-volumes/myapp/data" {
+		t.Errorf("persistent source = %s", s)
+	}
+	if s := Source(DefaultRoot, "myapp", got[1]); s != "/var/lib/zero-scale-scratch/myapp/cache" {
+		t.Errorf("temporary source = %s", s)
+	}
+	props := strings.Join(SystemdProperties(DefaultRoot, "myapp", "zs-myapp", got), "\n")
+	if !strings.Contains(props, "BindPaths=/var/lib/zero-scale-scratch/myapp/cache:/var/cache/app") {
+		t.Errorf("props:\n%s", props)
 	}
 }

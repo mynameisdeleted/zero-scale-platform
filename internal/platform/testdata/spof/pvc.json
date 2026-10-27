@@ -1,0 +1,10 @@
+{"items":[
+ {"metadata":{"namespace":"nextcloud","name":"nextcloud-pvc"},"spec":{"storageClassName":"microk8s-hostpath"}},
+ {"metadata":{"namespace":"default","name":"prometheus-server"},"spec":{"storageClassName":"microk8s-hostpath"}},
+ {"metadata":{"namespace":"default","name":"scratch","annotations":{"zero-scale.io/data":"temporary"}},"spec":{"storageClassName":"microk8s-hostpath"}},
+ {"metadata":{"namespace":"default","name":"unused"},"spec":{"storageClassName":"microk8s-hostpath"}},
+ {"metadata":{"namespace":"default","name":"data"},"spec":{"storageClassName":"longhorn"}},
+ {"metadata":{"namespace":"qa","name":"datadir-qa-pxc-pxc-0"},"spec":{"storageClassName":"longhorn-db-local"}},
+ {"metadata":{"namespace":"qa","name":"datadir-qa-pxc-pxc-1"},"spec":{"storageClassName":"longhorn-db-local"}},
+ {"metadata":{"namespace":"qa","name":"datadir-qa-pxc-pxc-2"},"spec":{"storageClassName":"longhorn-db-local"}}
+]}

@@ -39,6 +39,22 @@ func acceptable(g Grade, allowNonHA bool) bool {
 	return g == HA || allowNonHA
 }
 
+// acceptableClass never takes a node-local class, not even with --allow-non-ha:
+// its data stays on one node's disk, so it is only fit for temporary data.
+func acceptableClass(sc StorageClass, allowNonHA bool) bool {
+	return !sc.NodeLocal && acceptable(sc.Grade, allowNonHA)
+}
+
+func checkClass(sc *StorageClass, allowNonHA bool) error {
+	if sc.NodeLocal {
+		return fmt.Errorf("storage class %q is node-local (%s): its data stays on one node, so it only suits temporary data, never platform storage", sc.Name, sc.Reason)
+	}
+	if !acceptable(sc.Grade, allowNonHA) {
+		return fmt.Errorf("storage class %q is %s (%s); pass --allow-non-ha to use it anyway", sc.Name, sc.Grade, sc.Reason)
+	}
+	return nil
+}
+
 // Choose turns a detection report into a platform Config.
 func Choose(r *Report, o Options) (*Config, error) {
 	c := &Config{}
@@ -50,12 +66,12 @@ func Choose(r *Report, o Options) (*Config, error) {
 		if sc == nil {
 			return nil, fmt.Errorf("storage class %q not found", o.BlockClass)
 		}
-		if !acceptable(sc.Grade, o.AllowNonHA) {
-			return nil, fmt.Errorf("storage class %q is %s (%s); pass --allow-non-ha to use it anyway", sc.Name, sc.Grade, sc.Reason)
+		if err := checkClass(sc, o.AllowNonHA); err != nil {
+			return nil, err
 		}
 		c.Storage.BlockClass = sc.Name
 	} else {
-		name, err := pickClass(r, "block storage class", "--storage-class", func(sc StorageClass) bool { return acceptable(sc.Grade, o.AllowNonHA) })
+		name, err := pickClass(r, "block storage class", "--storage-class", func(sc StorageClass) bool { return acceptableClass(sc, o.AllowNonHA) })
 		if err != nil {
 			return nil, err
 		}
@@ -76,8 +92,8 @@ func Choose(r *Report, o Options) (*Config, error) {
 		if !sc.RWX {
 			return nil, fmt.Errorf("storage class %q (%s) cannot serve ReadWriteMany volumes", sc.Name, sc.Provisioner)
 		}
-		if !acceptable(sc.Grade, o.AllowNonHA) {
-			return nil, fmt.Errorf("storage class %q is %s (%s); pass --allow-non-ha to use it anyway", sc.Name, sc.Grade, sc.Reason)
+		if err := checkClass(sc, o.AllowNonHA); err != nil {
+			return nil, err
 		}
 		c.Storage.RWXClass = sc.Name
 	default:
@@ -85,7 +101,7 @@ func Choose(r *Report, o Options) (*Config, error) {
 			c.Storage.RWXClass = sc.Name
 			break
 		}
-		name, err := pickClass(r, "RWX storage class", "--rwx-class", func(sc StorageClass) bool { return sc.RWX && acceptable(sc.Grade, o.AllowNonHA) })
+		name, err := pickClass(r, "RWX storage class", "--rwx-class", func(sc StorageClass) bool { return sc.RWX && acceptableClass(sc, o.AllowNonHA) })
 		if err != nil {
 			return nil, err
 		}

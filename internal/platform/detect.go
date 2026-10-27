@@ -30,6 +30,7 @@ type StorageClass struct {
 	Default     bool
 	Grade       Grade
 	RWX         bool // provider can serve ReadWriteMany volumes
+	NodeLocal   bool // data lives on one node's disk: fit only for temporary data
 	Reason      string
 }
 
@@ -273,6 +274,10 @@ func gradeStorageClass(sc object) StorageClass {
 		ok, n := atLeast(po, "numberOfReplicas", 3, 2)
 		grade(ok, fmt.Sprintf("Longhorn, %d replicas", n))
 		s.RWX = true
+		if n < 2 && po.str("dataLocality") == "strict-local" {
+			s.NodeLocal = true
+			s.Reason += ", strict-local"
+		}
 	case strings.HasSuffix(p, ".rbd.csi.ceph.com"):
 		grade(true, "Ceph RBD (pool replication)")
 	case strings.HasSuffix(p, ".cephfs.csi.ceph.com"):
@@ -283,6 +288,7 @@ func gradeStorageClass(sc object) StorageClass {
 		grade(ok, fmt.Sprintf("OpenEBS Mayastor, repl %d", n))
 	case strings.Contains(p, "openebs.io/local") || p == "local.csi.openebs.io":
 		grade(false, "OpenEBS local PV (node-local)")
+		s.NodeLocal = true
 	case p == "linstor.csi.linbit.com":
 		n, ok := po.num("placementCount")
 		if !ok {
@@ -317,6 +323,7 @@ func gradeStorageClass(sc object) StorageClass {
 	case p == "rancher.io/local-path" || p == "microk8s.io/hostpath" || p == "kubernetes.io/host-path" ||
 		p == "k8s.io/minikube-hostpath" || p == "kubernetes.io/no-provisioner" || p == "docker.io/hostpath":
 		grade(false, "node-local storage")
+		s.NodeLocal = true
 	}
 	return s
 }

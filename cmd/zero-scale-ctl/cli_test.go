@@ -83,7 +83,10 @@ func TestDoctorReportsSingleNodeFailures(t *testing.T) {
 	fakeKubectl(t, `  "get ingress -A -o json") cat "$F/spof/ingress.json" ;;
   "get service -A -o json") cat "$F/spof/service.json" ;;
   "get pods -A -o json") cat "$F/spof/pods.json" ;;
-  "get nodes -o json") cat "$F/spof/nodes.json" ;;`)
+  "get nodes -o json") cat "$F/spof/nodes.json" ;;
+  "get storageclass -o json") cat "$F/spof/storageclass.json" ;;
+  "get pvc -A -o json") cat "$F/spof/pvc.json" ;;
+  "get domainmappings.serving.knative.dev -A -o json") cat "$F/spof/domainmappings.serving.knative.dev.json" ;;`)
 	out := captureStdout(t, func() {
 		if err := runDoctor(nil); err != nil {
 			t.Fatal(err)
@@ -92,8 +95,18 @@ func TestDoctorReportsSingleNodeFailures(t *testing.T) {
 	for _, want := range []string{
 		"==> Single node failure",
 		"kourier-system/kourier claims 192.168.1.134 (node steve-disks)",
-		"default/zero-scale-gateway: 1 pod, on steve-disks (fdm.ffxm.cc, hs.ffxm.cc)",
-		"1 of 3 Ingress backends survive",
+		"default/zero-scale-gateway: 1 pod, on steve-disks (fdm.ffxm.cc, hopscotch.kube.fairfaxmedia.net, hs.ffxm.cc)",
+		"default/hopscotch-admin: Service not found (hopscotch-admin.kube.fairfaxmedia.net)",
+		"nextcloud/nextcloud: 1 pod, on didi-macbookpro14-3; persistent data on node-local nextcloud-pvc (microk8s-hostpath)",
+		"1 of 6 Ingress backends survive",
+		"Default StorageClass microk8s-hostpath is node-local",
+		"kubectl annotate storageclass microk8s-hostpath storageclass.kubernetes.io/is-default-class=false --overwrite",
+		"❌ default/prometheus-server (microk8s-hostpath, on steve-disks, used by prometheus-server-1): persistent data",
+		"kubectl -n default annotate pvc prometheus-server zero-scale.io/data=temporary",
+		"ℹ️  default/scratch (microk8s-hostpath, on sv2d, used by cache-1): temporary data",
+		"✅ qa/datadir-qa-pxc-pxc-0 (longhorn-db-local, on sv2d, used by qa-pxc-pxc-0): node-local, but StatefulSet/qa-pxc-pxc runs on 3 nodes",
+		"hopscotch.kube.fairfaxmedia.net/ is routed by several Ingresses to different Services; only one wins: default/hoppscotch-web -> default/hoppscotch-web; default/zero-scale-gateway -> default/zero-scale-gateway",
+		"papi.fairfaxmedia.net is a Knative DomainMapping with no Ingress rule",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q\n%s", want, out)
@@ -308,4 +321,18 @@ func captureStdout(t *testing.T, fn func()) string {
 	w.Close()
 	os.Stdout = old
 	return <-done
+}
+
+func TestDoctorRespectsRecordedChoices(t *testing.T) {
+	// Two HA Postgres candidates would be ambiguous, but the config records one.
+	cm := `{"data":{"version":"1","storage.blockClass":"longhorn","storage.rwxClass":"longhorn","postgres.operator":"cnpg","postgres.cluster":"cnpg-system/ha-postgres","postgres.rwService":"ha-postgres-rw.cnpg-system.svc.cluster.local:5432"}}`
+	fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+cm+`' ;;`)
+	out := captureStdout(t, func() {
+		if err := runDoctor(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(out, "candidates fit") {
+		t.Errorf("doctor asked for a choice the config already records:\n%s", out)
+	}
 }

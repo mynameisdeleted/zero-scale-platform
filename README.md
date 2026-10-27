@@ -145,9 +145,27 @@ The Zero-Scale Gateway requires a Read-Write-Many (RWX) or persistent volume mou
 volumes:
   - data:/var/lib/notes        # name:/mount/path, read-write
   - assets:/srv/assets:ro      # read-only
+  - cache:/var/cache/notes:tmp # temporary data only (see below)
 ```
 
 Each volume is the directory `/srv/zero-scale-volumes/<app>/<name>`, bind-mounted at the given path. Apps with volumes run as the fixed dynamic user `zs-<app>`, so the files keep one owner across restarts and replicas. The older `mounts: /path` form still works and is treated as a volume named after the last path element. Volume data survives `delete-app --purge` unless `--delete-volumes` is given. Because the volume is shared by every replica, an app that writes to it must tolerate a second copy of itself running on another replica (the ingress pins each host to one replica, but a failover can briefly run two).
+
+A `:tmp` volume is for data the app can rebuild (caches, scratch files). It lives at `/var/lib/zero-scale-scratch/<app>/<name>` on the gateway pod's own disk, not on the shared volume. It is not shared between replicas, and it is gone when the pod is replaced or moves to another node.
+
+#### Node-local storage is for temporary data only
+Some StorageClasses keep a volume's data on one node's disk: `microk8s-hostpath`, `local-path`, OpenEBS local PV, and Longhorn with 1 replica and `dataLocality: strict-local`. If that node goes down, the data is unavailable or lost, and pods using it cannot move to another node. `zero-scale-ctl`:
+
+- never records a node-local class as platform storage in `init`, not even with `--allow-non-ha`;
+- in `doctor` → "Single node failure", lists every PVC on a node-local class that a running pod mounts. A PVC is not counted as a failure when either of these applies:
+  - it is annotated as temporary data:
+    ```bash
+    kubectl -n <namespace> annotate pvc <pvc> zero-scale.io/data=temporary
+    ```
+  - its workload runs on two or more nodes, like a database cluster with one node-local volume per member (Percona XtraDB on `longhorn-db-local`). doctor cannot tell replication from sharding, so check that the workload really keeps copies.
+- warns when a node-local class is the cluster's default StorageClass, and prints the command that removes the default annotation:
+  ```bash
+  kubectl annotate storageclass microk8s-hostpath storageclass.kubernetes.io/is-default-class=false --overwrite
+  ```
 
 ### 2. PostgreSQL (CloudNativePG)
 <a id="postgresql-cloudnativepg"></a>

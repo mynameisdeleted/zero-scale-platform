@@ -256,7 +256,7 @@ func runDoctor(args []string) error {
 	if current != nil {
 		fmt.Printf("    Platform config exists in %s/%s. Re-run 'zero-scale-ctl init' to refresh it.\n", platformNamespace(), platform.ConfigMapName)
 	}
-	_, chooseErr := platform.Choose(r, platform.Options{})
+	_, chooseErr := platform.Choose(r, recordedOptions(current))
 	switch e := chooseErr.(type) {
 	case nil:
 		if current == nil {
@@ -280,6 +280,22 @@ func runDoctor(args []string) error {
 	return nil
 }
 
+// recordedOptions turns an existing platform config into Choose options, so
+// doctor judges the recorded choices instead of asking for them again.
+func recordedOptions(c *platform.Config) platform.Options {
+	if c == nil {
+		return platform.Options{}
+	}
+	o := platform.Options{BlockClass: c.Storage.BlockClass, RWXClass: c.Storage.RWXClass, Postgres: "none", MySQL: "none"}
+	if c.Postgres != nil {
+		o.Postgres = c.Postgres.Ref()
+	}
+	if c.MySQL != nil {
+		o.MySQL = c.MySQL.Ref()
+	}
+	return o
+}
+
 // printNodeFailure lists what one node going down would take off the air, and
 // Services that hijack a node's IP so that node cannot serve ingress traffic.
 func printNodeFailure(r *platform.Report) {
@@ -292,6 +308,39 @@ func printNodeFailure(r *platform.Report) {
 	}
 	if len(defaults) > 1 {
 		fmt.Printf("    ⚠️  %d default StorageClasses (%s): PVCs without a class land on whichever the API server picks.\n", len(defaults), strings.Join(defaults, ", "))
+	}
+	for _, sc := range r.StorageClasses {
+		if sc.Default && sc.NodeLocal {
+			fmt.Printf("    ⚠️  Default StorageClass %s is node-local: PVCs without a class keep their data on one node. Fix:\n", sc.Name)
+			fmt.Printf("        kubectl annotate storageclass %s storageclass.kubernetes.io/is-default-class=false --overwrite\n", sc.Name)
+		}
+	}
+	locals, err := platform.NodeLocalVolumes(kubectlKube{})
+	if err != nil {
+		fmt.Printf("    (could not check node-local volumes: %v)\n", err)
+	}
+	for _, v := range locals {
+		where := fmt.Sprintf("%s/%s (%s, on %s, used by %s)", v.Namespace, v.PVC, v.Class, strings.Join(v.Nodes, ", "), strings.Join(v.Pods, ", "))
+		switch {
+		case v.Temporary:
+			fmt.Printf("    ℹ️  %s: temporary data (%s=temporary); its pods still cannot move off that node.\n", where, platform.TemporaryDataAnnotation)
+		case v.Replicated():
+			fmt.Printf("    ✅ %s: node-local, but %s runs on %d nodes (replicated or sharded by the workload itself).\n", where, v.Owner, v.OwnerNodes)
+		default:
+			fmt.Printf("    ❌ %s: persistent data on node-local storage is lost or unavailable with that node.\n", where)
+			fmt.Printf("        Move it to an HA class, or if it only holds temporary data: kubectl -n %s annotate pvc %s %s=temporary\n", v.Namespace, v.PVC, platform.TemporaryDataAnnotation)
+		}
+	}
+	conflicts, err := platform.RouteConflicts(kubectlKube{})
+	if err != nil {
+		fmt.Printf("    (could not check Ingress routes: %v)\n", err)
+	}
+	for _, c := range conflicts {
+		fmt.Printf("    ⚠️  %s%s is routed by several Ingresses to different Services; only one wins: %s\n", c.Host, c.Path, strings.Join(c.Routes, "; "))
+	}
+	knativeOnly, _ := platform.KnativeOnlyHosts(kubectlKube{})
+	for _, h := range knativeOnly {
+		fmt.Printf("    ⚠️  %s is a Knative DomainMapping with no Ingress rule: it only answers on the Knative gateway's own address, not on every node.\n", h)
 	}
 	claims, err := platform.NodeIPClaims(kubectlKube{})
 	if err != nil {
@@ -337,6 +386,9 @@ func printReport(r *platform.Report) {
 		}
 		if sc.Default {
 			extra += " default"
+		}
+		if sc.NodeLocal {
+			extra += " node-local (temporary data only)"
 		}
 		fmt.Printf("    %s %-24s %-32s %s%s\n", mark(sc.Grade), sc.Name, sc.Provisioner, sc.Reason, extra)
 	}

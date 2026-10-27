@@ -60,6 +60,11 @@ func TestStorageGrades(t *testing.T) {
 			t.Errorf("%s: grade %s rwx %v, want %s %v (%s)", sc.Name, sc.Grade, sc.RWX, w.grade, w.rwx, sc.Reason)
 		}
 	}
+	for _, sc := range r.StorageClasses {
+		if sc.NodeLocal != (sc.Name == "local-path") {
+			t.Errorf("%s: NodeLocal = %v", sc.Name, sc.NodeLocal)
+		}
+	}
 }
 
 func TestDatabasesDetected(t *testing.T) {
@@ -144,8 +149,14 @@ func TestChooseOverridesAndAmbiguity(t *testing.T) {
 	if c.Storage.BlockClass != "ceph-block" || c.Storage.RWXClass != "longhorn" || c.MySQL != nil {
 		t.Errorf("got %+v", c)
 	}
-	if _, err := Choose(r, Options{BlockClass: "local-path"}); err == nil || !strings.Contains(err.Error(), "--allow-non-ha") {
+	if _, err := Choose(r, Options{BlockClass: "gp3"}); err == nil || !strings.Contains(err.Error(), "--allow-non-ha") {
 		t.Errorf("non-HA override should need --allow-non-ha, got %v", err)
+	}
+	// Node-local storage is never platform storage, not even with --allow-non-ha.
+	for _, o := range []Options{{BlockClass: "local-path"}, {BlockClass: "local-path", AllowNonHA: true}} {
+		if _, err := Choose(r, o); err == nil || !strings.Contains(err.Error(), "node-local") {
+			t.Errorf("%+v: want a node-local refusal, got %v", o, err)
+		}
 	}
 	if _, err := Choose(r, Options{BlockClass: "longhorn", RWXClass: "ceph-block"}); err == nil {
 		t.Error("ceph-block is not RWX")
@@ -186,5 +197,17 @@ func TestOperatorFor(t *testing.T) {
 	}
 	if _, err := OperatorFor("postgres", "nope"); err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestNodeLocalNeverPickedAutomatically(t *testing.T) {
+	r := &Report{StorageClasses: []StorageClass{
+		{Name: "microk8s-hostpath", Grade: NotHA, NodeLocal: true, Default: true},
+		{Name: "longhorn-db-local", Grade: NotHA, NodeLocal: true, RWX: true},
+	}}
+	_, err := Choose(r, Options{AllowNonHA: true})
+	var m *MissingError
+	if !errors.As(err, &m) || len(m.Missing) != 2 {
+		t.Fatalf("err = %v", err)
 	}
 }

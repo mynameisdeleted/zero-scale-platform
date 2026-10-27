@@ -13,22 +13,33 @@ type Exposure struct {
 	Hosts     []string
 	Pods      int      // running pods behind the Service
 	Nodes     []string // distinct nodes those pods run on
+	Missing   bool     // the Ingress names a Service that does not exist
+	Pinned    []string // node-local PVCs with persistent data that the pods mount
 }
 
 // Survives reports whether the Service keeps serving when any one node is lost.
-func (e Exposure) Survives() bool { return len(e.Nodes) >= 2 }
+func (e Exposure) Survives() bool { return !e.Missing && len(e.Nodes) >= 2 && len(e.Pinned) == 0 }
 
 // Problem describes why the Service would not survive, or "" when it would.
 func (e Exposure) Problem() string {
+	var p string
 	switch {
+	case e.Missing:
+		return "Service not found"
 	case e.Pods == 0:
 		return "no running pods"
 	case len(e.Nodes) < 2 && e.Pods == 1:
-		return "1 pod, on " + e.Nodes[0]
+		p = "1 pod, on " + e.Nodes[0]
 	case len(e.Nodes) < 2:
-		return fmt.Sprintf("%d pods, all on %s", e.Pods, e.Nodes[0])
+		p = fmt.Sprintf("%d pods, all on %s", e.Pods, e.Nodes[0])
 	}
-	return ""
+	if len(e.Pinned) > 0 {
+		if p != "" {
+			p += "; "
+		}
+		p += "persistent data on node-local " + strings.Join(e.Pinned, ", ")
+	}
+	return p
 }
 
 // IngressExposures lists every Service an Ingress routes to and the nodes its
@@ -45,6 +56,16 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 	pods, err := getItems(k, "get", "pods", "-A")
 	if err != nil {
 		return nil, err
+	}
+	locals, err := NodeLocalVolumes(k)
+	if err != nil {
+		return nil, err
+	}
+	atRisk := map[string]LocalVolume{}
+	for _, v := range locals {
+		if v.AtRisk() {
+			atRisk[v.Namespace+"/"+v.PVC] = v
+		}
 	}
 
 	byKey := map[string]*Exposure{}
@@ -84,9 +105,13 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 	}
 
 	for key, e := range byKey {
-		sel := selectors[key]
+		sel, found := selectors[key]
+		if !found {
+			e.Missing = true
+			continue
+		}
 		if len(sel) == 0 {
-			continue // no Service, or one without a selector (external endpoints): not judged
+			continue // a Service without a selector (external endpoints): not judged
 		}
 		nodes := map[string]bool{}
 		for _, p := range pods {
@@ -104,6 +129,12 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 			if match {
 				e.Pods++
 				nodes[p.str("spec", "nodeName")] = true
+				for _, vol := range p.list("spec", "volumes") {
+					claim := vol.str("persistentVolumeClaim", "claimName")
+					if v, ok := atRisk[e.Namespace+"/"+claim]; ok && !contains(e.Pinned, claim+" ("+v.Class+")") {
+						e.Pinned = append(e.Pinned, claim+" ("+v.Class+")")
+					}
+				}
 			}
 		}
 		for n := range nodes {
@@ -114,7 +145,7 @@ func IngressExposures(k Kube) ([]Exposure, error) {
 
 	var out []Exposure
 	for key, e := range byKey {
-		if len(selectors[key]) == 0 {
+		if sel, found := selectors[key]; found && len(sel) == 0 {
 			continue
 		}
 		sort.Strings(e.Hosts)
@@ -185,5 +216,83 @@ func NodeIPClaims(k Kube) ([]IPClaim, error) {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Namespace+"/"+out[i].Service < out[j].Namespace+"/"+out[j].Service
 	})
+	return out, nil
+}
+
+// RouteConflict is one host and path that several Ingresses send to different Services.
+type RouteConflict struct {
+	Host, Path string
+	Routes     []string // namespace/ingress -> service
+}
+
+// RouteConflicts lists host+path pairs routed to different backends by more than
+// one Ingress; ingress-nginx then serves only one of them.
+func RouteConflicts(k Kube) ([]RouteConflict, error) {
+	ingresses, err := getItems(k, "get", "ingress", "-A")
+	if err != nil {
+		return nil, err
+	}
+	type route struct{ ingress, service string }
+	byRoute := map[[2]string][]route{}
+	for _, ing := range ingresses {
+		ns := ing.str("metadata", "namespace")
+		for _, rule := range ing.list("spec", "rules") {
+			host := strings.ToLower(rule.str("host"))
+			for _, p := range rule.list("http", "paths") {
+				path := p.str("path")
+				if path == "" {
+					path = "/"
+				}
+				key := [2]string{host, path}
+				byRoute[key] = append(byRoute[key], route{ns + "/" + ing.str("metadata", "name"), ns + "/" + p.str("backend", "service", "name")})
+			}
+		}
+	}
+	var out []RouteConflict
+	for key, routes := range byRoute {
+		services := map[string]bool{}
+		for _, r := range routes {
+			services[r.service] = true
+		}
+		if len(services) < 2 {
+			continue
+		}
+		c := RouteConflict{Host: key[0], Path: key[1]}
+		for _, r := range routes {
+			c.Routes = append(c.Routes, r.ingress+" -> "+r.service)
+		}
+		sort.Strings(c.Routes)
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Host+out[i].Path < out[j].Host+out[j].Path })
+	return out, nil
+}
+
+// KnativeOnlyHosts lists Knative DomainMapping hosts that no Ingress rule
+// routes. They only answer on the Knative gateway's own address (Kourier),
+// not through the ingress controller on every node. A cluster without
+// Knative yields nothing.
+func KnativeOnlyHosts(k Kube) ([]string, error) {
+	mappings, err := getItems(k, "get", "domainmappings.serving.knative.dev", "-A")
+	if err != nil {
+		return nil, nil // no Knative
+	}
+	ingresses, err := getItems(k, "get", "ingress", "-A")
+	if err != nil {
+		return nil, err
+	}
+	var routed []string
+	for _, ing := range ingresses {
+		for _, rule := range ing.list("spec", "rules") {
+			routed = append(routed, rule.str("host"))
+		}
+	}
+	var out []string
+	for _, m := range mappings {
+		if h := m.str("metadata", "name"); !hasHost(routed, h) && !hasHost(out, h) {
+			out = append(out, h)
+		}
+	}
+	sort.Strings(out)
 	return out, nil
 }

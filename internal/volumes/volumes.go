@@ -1,6 +1,8 @@
 // Package volumes parses an app's persistent volume claims and turns them into
 // systemd properties. Each volume is a subdirectory of the gateway's shared RWX
-// volume (Longhorn or any HA RWX class), bound into the app's sandbox.
+// volume (Longhorn or any HA RWX class), bound into the app's sandbox. A volume
+// marked :tmp is temporary data instead: it lives on the gateway pod's own disk,
+// is never shared between replicas and is gone when the pod is replaced.
 package volumes
 
 import (
@@ -13,19 +15,23 @@ import (
 // DefaultRoot is where the gateway mounts the shared volumes PVC.
 const DefaultRoot = "/srv/zero-scale-volumes"
 
+// ScratchRoot holds :tmp volumes on the gateway pod's own (node-local) disk.
+const ScratchRoot = "/var/lib/zero-scale-scratch"
+
 // Volume is one persistent directory an app sees at Mount.
 type Volume struct {
-	Name     string
-	Mount    string
-	ReadOnly bool
+	Name      string
+	Mount     string
+	ReadOnly  bool
+	Temporary bool // :tmp, node-local scratch space that may vanish
 }
 
 var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
 // Paths an app may not mount over.
-var reserved = []string{"/", "/proc", "/sys", "/dev", "/run", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt/apps", "/srv/zero-scale-volumes", "/tmp", "/var/tmp"}
+var reserved = []string{"/", "/proc", "/sys", "/dev", "/run", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt/apps", "/srv/zero-scale-volumes", ScratchRoot, "/tmp", "/var/tmp"}
 
-// Parse reads "name:/mount[:ro]" entries separated by commas or whitespace. A bare
+// Parse reads "name:/mount[:ro|:rw|:tmp]" entries separated by commas or whitespace. A bare
 // "/mount" (the old mounts: form) takes its name from the last path element.
 func Parse(spec string) ([]Volume, error) {
 	var out []Volume
@@ -39,15 +45,16 @@ func Parse(spec string) ([]Volume, error) {
 			parts = append([]string{v.Name}, parts...)
 		} else {
 			if len(parts) < 2 {
-				return nil, fmt.Errorf("volume %q: want name:/mount/path[:ro]", item)
+				return nil, fmt.Errorf("volume %q: want name:/mount/path[:ro|:tmp]", item)
 			}
 			v.Name, v.Mount = parts[0], parts[1]
 		}
 		if len(parts) == 3 {
-			if parts[2] != "ro" && parts[2] != "rw" {
-				return nil, fmt.Errorf("volume %q: mode must be ro or rw", item)
+			if parts[2] != "ro" && parts[2] != "rw" && parts[2] != "tmp" {
+				return nil, fmt.Errorf("volume %q: mode must be ro, rw or tmp", item)
 			}
 			v.ReadOnly = parts[2] == "ro"
+			v.Temporary = parts[2] == "tmp"
 		} else if len(parts) > 3 {
 			return nil, fmt.Errorf("volume %q: too many ':' separators", item)
 		}
@@ -58,7 +65,7 @@ func Parse(spec string) ([]Volume, error) {
 			return nil, fmt.Errorf("volume %q: mount must be a clean absolute path", item)
 		}
 		for _, r := range reserved {
-			if v.Mount == r || strings.HasPrefix(v.Mount, "/opt/apps/") || strings.HasPrefix(v.Mount, DefaultRoot+"/") || strings.HasPrefix(v.Mount, "/proc/") || strings.HasPrefix(v.Mount, "/sys/") || strings.HasPrefix(v.Mount, "/dev/") {
+			if v.Mount == r || strings.HasPrefix(v.Mount, "/opt/apps/") || strings.HasPrefix(v.Mount, DefaultRoot+"/") || strings.HasPrefix(v.Mount, ScratchRoot+"/") || strings.HasPrefix(v.Mount, "/proc/") || strings.HasPrefix(v.Mount, "/sys/") || strings.HasPrefix(v.Mount, "/dev/") {
 				return nil, fmt.Errorf("volume %q: %s is reserved", item, v.Mount)
 			}
 		}
@@ -78,14 +85,20 @@ func Format(vols []Volume) string {
 		s := v.Name + ":" + v.Mount
 		if v.ReadOnly {
 			s += ":ro"
+		} else if v.Temporary {
+			s += ":tmp"
 		}
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, ",")
 }
 
-// Source is the host directory backing a volume.
+// Source is the host directory backing a volume: under root on the shared
+// volume, or under ScratchRoot on the pod's own disk for a :tmp volume.
 func Source(root, app string, v Volume) string {
+	if v.Temporary {
+		return path.Join(ScratchRoot, app, v.Name)
+	}
 	return path.Join(root, app, v.Name)
 }
 

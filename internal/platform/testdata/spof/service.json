@@ -63,6 +63,28 @@
      }
     ]
    }
+  },
+  {
+   "metadata": {
+    "namespace": "default",
+    "name": "hoppscotch-web"
+   },
+   "spec": {
+    "selector": {
+     "app": "hoppscotch-web"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "namespace": "nextcloud",
+    "name": "nextcloud"
+   },
+   "spec": {
+    "selector": {
+     "app": "nextcloud"
+    }
+   }
   }
  ]
 }
