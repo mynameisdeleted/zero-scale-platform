@@ -320,3 +320,11 @@ func gradeStorageClass(sc object) StorageClass {
 	}
 	return s
 }
+
+func parseObject(b []byte) (object, error) {
+	var o object
+	if err := json.Unmarshal(b, &o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}

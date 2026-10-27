@@ -162,6 +162,7 @@ metadata:
 	b.WriteString(`  annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$host"
 `)
 	if oauthSetupName != "" {
 		proxySvc := OAuthProxyServiceName(oauthSetupName)

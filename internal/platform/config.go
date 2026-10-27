@@ -47,9 +47,9 @@ type DBTarget struct {
 
 // IngressConfig is filled in by the gateway and ingress commands.
 type IngressConfig struct {
-	Class     string
-	Hosts     []string
-	TLSSecret string // namespace/name
+	Class string
+	Hosts []string          // individual hosts and wildcards (*.apps.example.com) routed to the gateway
+	TLS   map[string]string // host -> "secret:<name>" or "issuer:<ClusterIssuer>"
 }
 
 // GatewayConfig records where the gateway runs and who manages it.
@@ -105,7 +105,13 @@ func (c *Config) ToData() map[string]string {
 	set("redis.service", c.Redis)
 	set("ingress.class", c.Ingress.Class)
 	set("ingress.hosts", strings.Join(c.Ingress.Hosts, ","))
-	set("ingress.tlsSecret", c.Ingress.TLSSecret)
+	var tls []string
+	for _, h := range c.Ingress.Hosts {
+		if v := c.Ingress.TLS[h]; v != "" {
+			tls = append(tls, h+"="+v)
+		}
+	}
+	set("ingress.tls", strings.Join(tls, ","))
 	set("gateway.namespace", c.Gateway.Namespace)
 	set("gateway.service", c.Gateway.Service)
 	set("gateway.managedBy", c.Gateway.ManagedBy)
@@ -120,12 +126,20 @@ func FromData(d map[string]string) (*Config, error) {
 	c := &Config{
 		Storage: StorageConfig{BlockClass: d["storage.blockClass"], RWXClass: d["storage.rwxClass"]},
 		Redis:   d["redis.service"],
-		Ingress: IngressConfig{Class: d["ingress.class"], TLSSecret: d["ingress.tlsSecret"]},
+		Ingress: IngressConfig{Class: d["ingress.class"]},
 		Gateway: GatewayConfig{Namespace: d["gateway.namespace"], Service: d["gateway.service"], ManagedBy: d["gateway.managedBy"]},
 	}
 	for _, h := range strings.Split(d["ingress.hosts"], ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			c.Ingress.Hosts = append(c.Ingress.Hosts, h)
+		}
+	}
+	for _, pair := range strings.Split(d["ingress.tls"], ",") {
+		if h, v, ok := strings.Cut(strings.TrimSpace(pair), "="); ok && h != "" && v != "" {
+			if c.Ingress.TLS == nil {
+				c.Ingress.TLS = map[string]string{}
+			}
+			c.Ingress.TLS[h] = v
 		}
 	}
 	for _, prefix := range []string{"postgres", "mysql"} {

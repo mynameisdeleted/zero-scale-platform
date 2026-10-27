@@ -128,10 +128,8 @@ func DeployBinary(app *AppConfig, namespace string) error {
 		if err != nil {
 			return fmt.Errorf("failed to chmod binary: %w", err)
 		}
-		// Stop running transient unit if any so next request launches the updated binary
-		_, _ = ExecPod(pod, namespace, "systemd-runner", []string{
-			"systemctl", "stop", fmt.Sprintf("app-%s.service", app.CanonicalHost()),
-		}, "")
+		// Stop the running unit on every gateway replica so the next request launches the updated binary
+		stopAppEverywhere(app.CanonicalHost(), namespace)
 		fmt.Printf("--> Successfully deployed and set executable: %s\n", targetBinPath)
 	} else {
 		fmt.Printf("--> Binary '%s' is up to date on shared persistent volume (sha256: %s).\n", targetBinPath, localHash[:12])

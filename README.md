@@ -89,6 +89,28 @@ zero-scale-ctl install postgres --cluster-only --namespace databases --name pg-m
 Both commands update the `zero-scale-platform` ConfigMap when they finish. Longhorn needs `open-iscsi` and
 `nfs-common` on every node; if `longhornctl` is on PATH, the plan runs `longhornctl check preflight` first.
 
+### Deploy the Gateway and Route Hosts
+```bash
+# HA gateway: 2 replicas, PodDisruptionBudget, spread across nodes, /opt/apps on the platform RWX class.
+# A gateway already managed by Helm is detected, recorded and left alone.
+zero-scale-ctl gateway install --image registry.example.com/systemd-runner:1.2.0 --yes
+zero-scale-ctl gateway status          # replicas, volume, which apps run on which replica
+
+# Route individual hosts or a wildcard to the gateway (each host sticks to one replica via upstream-hash-by)
+zero-scale-ctl ingress add-host '*.apps.example.com' --issuer letsencrypt-dns   # wildcard needs a DNS-01 issuer
+zero-scale-ctl ingress add-host status.example.com --tls-secret status-tls
+zero-scale-ctl ingress list
+```
+When every hostname of an app is covered by a routed host, `apply` skips the per-app Ingress (unless the app uses
+OAuth, which needs its own annotations).
+
+### Remove an Application
+```bash
+zero-scale-ctl delete-app fdm                                  # ConfigMap only (previous behaviour)
+zero-scale-ctl delete-app fdm --purge                          # + Ingress, Secrets, host entries, OAuth routes; stops it on every replica
+zero-scale-ctl delete-app fdm --purge --drop-database          # + drops its database and user
+```
+
 ### Deploy an Application
 ```bash
 # Reconcile an app from a simple declarative config file

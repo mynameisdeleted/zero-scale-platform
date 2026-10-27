@@ -160,3 +160,108 @@ func TestInstallPostgresAppliesAndRecords(t *testing.T) {
 		t.Errorf("operator already present, should not be reinstalled:\n%s", got)
 	}
 }
+
+const platformCM = `{"data":{"version":"1","storage.blockClass":"longhorn","storage.rwxClass":"longhorn","gateway.namespace":"zero-scale-system","gateway.service":"zero-scale-gateway","ingress.class":"nginx"}}`
+
+func mutatingCalls(log string) []string {
+	var out []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "kubectl ") && !strings.HasPrefix(line, "kubectl get ") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func TestGatewayInstallDryRunAndHelmGuard(t *testing.T) {
+	log := fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+platformCM+`' ;;`)
+	if err := runGateway([]string{"install", "--image", "reg/zs:1"}); err != nil {
+		t.Fatal(err)
+	}
+	if m := mutatingCalls(readLog(t, log)); len(m) != 0 {
+		t.Errorf("dry run changed things: %v", m)
+	}
+
+	helmDeploy := `{"metadata":{"labels":{"app.kubernetes.io/managed-by":"Helm"}}}`
+	log = fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+platformCM+`' ;;
+  "get deployment zero-scale-gateway -n zero-scale-system -o json") echo '`+helmDeploy+`' ;;`)
+	if err := runGateway([]string{"install", "--image", "reg/zs:1", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readLog(t, log)
+	if strings.Contains(got, "kind: Deployment") {
+		t.Error("must not touch a Helm-managed gateway")
+	}
+	if !strings.Contains(got, `gateway.managedBy: "Helm"`) {
+		t.Errorf("Helm gateway not recorded:\n%s", got)
+	}
+}
+
+func TestIngressAddHost(t *testing.T) {
+	httpOnly := `{"spec":{"acme":{"solvers":[{"http01":{}}]}}}`
+	log := fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+platformCM+`' ;;
+  "get clusterissuer le-http -o json") echo '`+httpOnly+`' ;;`)
+	if err := runIngress([]string{"add-host", "*.apps.example.com", "--issuer", "le-http"}); err == nil || !strings.Contains(err.Error(), "DNS-01") {
+		t.Fatalf("expected DNS-01 refusal, got %v", err)
+	}
+	if err := runIngress([]string{"add-host", "--tls-secret", "wildcard-tls", "*.apps.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	got := readLog(t, log)
+	for _, want := range []string{
+		"name: zero-scale-wildcard-apps-example-com",
+		"secretName: wildcard-tls",
+		"ingressClassName: nginx",
+		`ingress.hosts: "*.apps.example.com"`,
+		`ingress.tls: "*.apps.example.com=secret:wildcard-tls"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestApplySkipsIngressWhenWildcardCovers(t *testing.T) {
+	cm := `{"data":{"version":"1","gateway.namespace":"zero-scale-system","ingress.hosts":"*.apps.example.com"}}`
+	fakeKubectl(t, `  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+cm+`' ;;`)
+	if !hostsCoveredByRoutes([]string{"fdm.apps.example.com"}, "zero-scale-system") {
+		t.Error("wildcard should cover the app host")
+	}
+	if hostsCoveredByRoutes([]string{"fdm.apps.example.com", "fdm.other.com"}, "zero-scale-system") {
+		t.Error("one uncovered host means a per-app Ingress is needed")
+	}
+	if hostsCoveredByRoutes([]string{"fdm.apps.example.com"}, "qa") {
+		t.Error("routes point at the platform gateway, not another namespace's")
+	}
+}
+
+func TestDeleteAppPurge(t *testing.T) {
+	appCM := `{"data":{"host":"fdm.ffxm.cc","hosts":"fdm.ffxm.cc,fleet.example.com","database_engine":"postgres"}}`
+	cnpg := `{"data":{"version":"1","postgres.operator":"cnpg","postgres.cluster":"cnpg-system/ha-postgres","postgres.rwService":"ha-postgres-rw.cnpg-system.svc.cluster.local:5432"}}`
+	log := fakeKubectl(t, `  "get configmap zero-scale-app-fdm -n default -o json") echo '`+appCM+`' ;;
+  "get configmap zero-scale-platform -n zero-scale-system -o json") echo '`+cnpg+`' ;;
+  "get pods -n default -l app=zero-scale-gateway --field-selector=status.phase=Running -o jsonpath={.items[*].metadata.name}") printf 'gw-a gw-b' ;;
+  "get pods -n default -l app=zero-scale-gateway --field-selector=status.phase=Running -o jsonpath={.items[0].metadata.name}") printf gw-a ;;
+  "get pods -n cnpg-system -l cnpg.io/cluster=ha-postgres,cnpg.io/instanceRole=primary "*) printf ha-postgres-1 ;;
+  "exec gw-"*|"delete "*) exit 0 ;;`)
+	if err := runDeleteApp([]string{"fdm", "--drop-database"}, "default"); err == nil {
+		t.Error("--drop-database without --purge must fail")
+	}
+	if err := runDeleteApp([]string{"fdm", "--purge", "--drop-database"}, "default"); err != nil {
+		t.Fatal(err)
+	}
+	got := readLog(t, log)
+	for _, want := range []string{
+		"exec gw-a -n default -c systemd-runner -- systemctl stop app-fdm.ffxm.cc.service",
+		"exec gw-b -n default -c systemd-runner -- systemctl stop app-fdm.ffxm.cc.service",
+		"rm -f /opt/apps/fleet.example.com",
+		"DROP DATABASE %I WITH (FORCE)",
+		"delete ingress zero-scale-fdm -n default",
+		"delete secret fdm-db-secret -n default",
+		"delete configmap zero-scale-app-fdm -n default",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}

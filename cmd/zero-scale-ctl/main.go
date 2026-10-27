@@ -26,6 +26,13 @@ Platform setup:
   install postgres   Install CloudNativePG and a 3-instance cluster on the HA storage class
                      [--name ha-postgres] [--namespace cnpg-system] [--instances 3] [--size 10Gi]
                      [--storage-class X] [--cluster-only] [--version V]
+  gateway install    Deploy an HA gateway (replicas, PDB, spread, RBAC, RWX /opt/apps) [--image I] [--replicas 2]
+                     [--namespace zero-scale-system] [--rwx-class X] [--idle-timeout 60s] [--yes]
+  gateway upgrade    Same as install, for an existing zero-scale-ctl managed gateway
+  gateway status     Replicas, volume and which apps are running on which replica
+  ingress add-host   Route a host or wildcard to the gateway: <host|*.domain> [--tls-secret S | --issuer I]
+  ingress remove-host <host>
+  ingress list
 
 Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
@@ -33,7 +40,8 @@ Commands:
   status <host>      Inspect systemd service status of an app
   logs <host>        Fetch journalctl logs for an app unit
   list-apps          List all registered zero-scale applications
-  delete-app <name>  Delete an application ConfigMap
+  delete-app <name>  Delete an application ConfigMap; --purge removes its Ingress, Secrets, host entries
+                     and OAuth routes and stops it everywhere; --drop-database also drops its database
   upload-binary      Upload a local binary directly to platform storage
   provision-db       Provision schema and credentials on shared database operator
 
@@ -101,17 +109,14 @@ func main() {
 			os.Exit(1)
 		}
 		host := resolveAppHost(os.Args[2], namespace)
-		pod, err := GetGatewayPod(namespace)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
 		unit := fmt.Sprintf("app-%s", host)
-		fmt.Printf("==> Checking status of '%s' in pod '%s' (%s)...\n", unit, pod, namespace)
-		statusCmd := exec.Command("kubectl", "exec", "-n", namespace, pod, "-c", "systemd-runner", "--", "systemctl", "status", unit)
-		statusCmd.Stdout = os.Stdout
-		statusCmd.Stderr = os.Stderr
-		_ = statusCmd.Run()
+		forEachGatewayPod(namespace, func(pod string) {
+			fmt.Printf("==> '%s' in pod '%s' (%s)\n", unit, pod, namespace)
+			statusCmd := exec.Command("kubectl", "exec", "-n", namespace, pod, "-c", "systemd-runner", "--", "systemctl", "status", "--no-pager", unit)
+			statusCmd.Stdout = os.Stdout
+			statusCmd.Stderr = os.Stderr
+			_ = statusCmd.Run()
+		})
 
 	case "logs":
 		if len(os.Args) < 3 {
@@ -123,17 +128,14 @@ func main() {
 		if len(os.Args) >= 5 && (os.Args[3] == "-n" || os.Args[3] == "--lines") {
 			lines = os.Args[4]
 		}
-		pod, err := GetGatewayPod(namespace)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
 		unit := fmt.Sprintf("app-%s", host)
-		fmt.Printf("==> Fetching last %s journal logs for '%s' in pod '%s'...\n", lines, unit, pod)
-		logCmd := exec.Command("kubectl", "exec", "-n", namespace, pod, "-c", "systemd-runner", "--", "journalctl", "-u", unit, "--no-pager", "-n", lines)
-		logCmd.Stdout = os.Stdout
-		logCmd.Stderr = os.Stderr
-		_ = logCmd.Run()
+		forEachGatewayPod(namespace, func(pod string) {
+			fmt.Printf("==> Last %s journal lines for '%s' in pod '%s'\n", lines, unit, pod)
+			logCmd := exec.Command("kubectl", "exec", "-n", namespace, pod, "-c", "systemd-runner", "--", "journalctl", "-u", unit, "--no-pager", "-n", lines)
+			logCmd.Stdout = os.Stdout
+			logCmd.Stderr = os.Stderr
+			_ = logCmd.Run()
+		})
 
 	case "list-apps":
 		fmt.Printf("==> Configured Zero-Scale Applications in namespace '%s':\n", namespace)
@@ -144,22 +146,10 @@ func main() {
 		_ = listCmd.Run()
 
 	case "delete-app":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: zero-scale-ctl delete-app <name>")
-			os.Exit(1)
-		}
-		name := os.Args[2]
-		cmName := name
-		if !strings.HasPrefix(cmName, "zero-scale-app-") {
-			cmName = appname.ConfigMapName(name)
-		}
-		fmt.Printf("==> Deleting ConfigMap '%s' in namespace '%s'...\n", cmName, namespace)
-		_, err := RunKubectl([]string{"delete", "configmap", cmName, "-n", namespace}, "")
-		if err != nil {
+		if err := runDeleteApp(os.Args[2:], namespace); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Done.")
 
 	case "upload-binary":
 		upFlags := flag.NewFlagSet("upload-binary", flag.ExitOnError)
@@ -251,6 +241,18 @@ func main() {
 
 	case "doctor":
 		if err := runDoctor(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "gateway":
+		if err := runGateway(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "ingress":
+		if err := runIngress(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			os.Exit(1)
 		}
@@ -363,6 +365,7 @@ func handleApply(configPath, expandPath, namespace string) error {
 		cmData["idle-timeout"] = app.IdleTimeout
 	}
 	if app.Database != nil {
+		cmData["database_engine"] = strings.ToLower(app.Database.Engine)
 		cmData["database_configmap"] = app.ConfigMapName()
 		cmData["database_secret"] = app.SecretName()
 	} else if len(app.Secrets) > 0 {
@@ -455,12 +458,18 @@ func handleApply(configPath, expandPath, namespace string) error {
 		}
 	}
 
-	// Step D: Configure public Ingress for all hostnames
-	fmt.Printf("--> Step 4: Configuring public Ingress for %v...\n", app.Hostnames)
+	// Step D: Configure public Ingress, unless the gateway's routed hosts (ingress add-host,
+	// e.g. a wildcard) already cover every hostname and no OAuth annotations are needed.
 	ingressName := fmt.Sprintf("zero-scale-%s", app.AppName())
-	err = ApplyIngress(ingressName, namespace, "zero-scale-gateway", 80, app.Hostnames, oauthSetup)
-	if err != nil {
-		return fmt.Errorf("failed to apply ingress: %w", err)
+	if covered := hostsCoveredByRoutes(app.Hostnames, namespace); covered && oauthSetup == "" {
+		fmt.Printf("--> Step 4: %v already routed to the gateway by platform ingress hosts; no per-app Ingress needed.\n", app.Hostnames)
+		_, _ = RunKubectl([]string{"delete", "ingress", ingressName, "-n", namespace, "--ignore-not-found"}, "")
+	} else {
+		fmt.Printf("--> Step 4: Configuring public Ingress for %v...\n", app.Hostnames)
+		err = ApplyIngress(ingressName, namespace, "zero-scale-gateway", 80, app.Hostnames, oauthSetup)
+		if err != nil {
+			return fmt.Errorf("failed to apply ingress: %w", err)
+		}
 	}
 
 	// Step E: Optionally write out expanded single-file Kubernetes manifest

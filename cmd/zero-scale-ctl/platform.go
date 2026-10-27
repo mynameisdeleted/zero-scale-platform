@@ -318,7 +318,7 @@ func runInit(args []string) error {
 	}
 	if current != nil {
 		// Keep settings that detection does not own.
-		cfg.Ingress.Hosts, cfg.Ingress.TLSSecret = current.Ingress.Hosts, current.Ingress.TLSSecret
+		cfg.Ingress.Hosts, cfg.Ingress.TLS = current.Ingress.Hosts, current.Ingress.TLS
 		if cfg.Gateway.Namespace == "" {
 			cfg.Gateway = current.Gateway
 		}

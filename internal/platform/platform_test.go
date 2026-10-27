@@ -156,6 +156,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	r, _ := Detect(fullCluster())
 	c, _ := Choose(r, Options{})
 	c.Ingress.Hosts = []string{"*.apps.example.com", "status.example.com"}
+	c.Ingress.TLS = map[string]string{"*.apps.example.com": "issuer:letsencrypt-dns"}
 	back, err := FromData(c.ToData())
 	if err != nil {
 		t.Fatal(err)
