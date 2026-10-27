@@ -14,6 +14,7 @@ import (
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/proxy"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/reaper"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/registry"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/sync"
 )
 
@@ -30,11 +31,12 @@ func main() {
 	}
 
 	// 2. Instantiate gateway proxy
-	gw := proxy.New(cfg)
+	apps := registry.New(cfg.KubeNamespace, 10*time.Second)
+	gw := proxy.New(cfg, apps)
 	gw.DiscoverExistingServices()
 
 	// 3. Start background workers
-	rp := reaper.New(cfg, gw.GetLastActiveMap, gw.StopService)
+	rp := reaper.New(cfg, gw.GetLastActiveMap, gw.StopService, apps.AppConfig)
 	go rp.Start()
 	go sync.StartArtifactSync(cfg)
 

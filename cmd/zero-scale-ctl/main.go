@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,7 +140,7 @@ func main() {
 		name := os.Args[2]
 		cmName := name
 		if !strings.HasPrefix(cmName, "zero-scale-app-") {
-			cmName = "zero-scale-app-" + name
+			cmName = appname.ConfigMapName(name)
 		}
 		fmt.Printf("==> Deleting ConfigMap '%s' in namespace '%s'...\n", cmName, namespace)
 		_, err := RunKubectl([]string{"delete", "configmap", cmName, "-n", namespace}, "")
@@ -321,6 +322,7 @@ func handleApply(configPath, expandPath, namespace string) error {
 	fmt.Printf("--> Step 3: Registering zero-scale-app-%s with gateway...\n", app.AppName())
 	cmData := map[string]string{
 		"host":          app.CanonicalHost(),
+		"hosts":         strings.Join(app.Hostnames, ","),
 		"url":           fmt.Sprintf("local://%s", app.AppName()),
 		"type":          "elf",
 		"scale-to-zero": "true",
@@ -475,11 +477,10 @@ func resolveAppHost(hostOrApp, namespace string) string {
 	if strings.Contains(hostOrApp, ".") {
 		return hostOrApp
 	}
-	if cm, err := GetConfigMapData(fmt.Sprintf("zero-scale-app-%s", hostOrApp), namespace); err == nil {
+	if cm, err := GetConfigMapData(appname.ConfigMapName(hostOrApp), namespace); err == nil {
 		if h := strings.TrimSpace(cm["host"]); h != "" {
 			return h
 		}
 	}
 	return hostOrApp
 }
-

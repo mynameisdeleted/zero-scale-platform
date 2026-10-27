@@ -11,16 +11,18 @@ import (
 )
 
 type Reaper struct {
-	cfg         *config.Config
-	stopFunc    func(string) error
-	getActive   func() map[string]time.Time
+	cfg       *config.Config
+	stopFunc  func(string) error
+	getActive func() map[string]time.Time
+	appConfig func(host string) map[string]string
 }
 
-func New(cfg *config.Config, getActive func() map[string]time.Time, stopFunc func(string) error) *Reaper {
+func New(cfg *config.Config, getActive func() map[string]time.Time, stopFunc func(string) error, appConfig func(host string) map[string]string) *Reaper {
 	return &Reaper{
 		cfg:       cfg,
 		getActive: getActive,
 		stopFunc:  stopFunc,
+		appConfig: appConfig,
 	}
 }
 
@@ -49,8 +51,7 @@ func (r *Reaper) Start() {
 			}
 
 			timeout := r.cfg.IdleTimeout
-			appData, err := runner.GetAppConfig(host, r.cfg.KubeNamespace)
-			if err == nil && appData != nil {
+			if appData := r.appConfig(host); appData != nil {
 				if appData["scale-to-zero"] == "false" {
 					continue // never scale to zero
 				}
@@ -77,8 +78,7 @@ func (r *Reaper) Start() {
 			}
 			unitName := fmt.Sprintf("app-%s", host)
 			timeout := r.cfg.IdleTimeout
-			appData, err := runner.GetAppConfig(host, r.cfg.KubeNamespace)
-			if err == nil && appData != nil {
+			if appData := r.appConfig(host); appData != nil {
 				if appData["scale-to-zero"] == "false" {
 					continue
 				}

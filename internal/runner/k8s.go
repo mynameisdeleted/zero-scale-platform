@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -174,9 +175,65 @@ func VerifyKubeToken(token, namespace string) (bool, string, error) {
 	return res.Status.Allowed, res.Status.Reason, nil
 }
 
-// GetAppConfig retrieves the zero-scale-app-<shortName> ConfigMap data for a host
-func GetAppConfig(host, namespace string) (map[string]string, error) {
-	shortName := strings.Split(host, ".")[0]
-	appCMName := "zero-scale-app-" + shortName
-	return FetchK8sResource("configmaps", appCMName, namespace)
+// ConfigMapItem is one ConfigMap returned by ListK8sConfigMaps.
+type ConfigMapItem struct {
+	Name string
+	Data map[string]string
+}
+
+// ListK8sConfigMaps lists ConfigMaps in namespace matching labelSelector via the in-cluster API.
+func ListK8sConfigMaps(namespace, labelSelector string) ([]ConfigMapItem, error) {
+	tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return nil, err
+	}
+	k8sHost := os.Getenv("KUBERNETES_SERVICE_HOST")
+	if k8sHost == "" {
+		k8sHost = "kubernetes.default.svc"
+	}
+	k8sPort := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if k8sPort == "" {
+		k8sPort = "443"
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	reqURL := fmt.Sprintf("https://%s:%s/api/v1/namespaces/%s/configmaps?labelSelector=%s",
+		k8sHost, k8sPort, namespace, url.QueryEscape(labelSelector))
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tokenBytes)))
+
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("k8s API returned status %d listing configmaps", resp.StatusCode)
+	}
+
+	var res struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Data map[string]string `json:"data"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	items := make([]ConfigMapItem, 0, len(res.Items))
+	for _, it := range res.Items {
+		items = append(items, ConfigMapItem{Name: it.Metadata.Name, Data: it.Data})
+	}
+	return items, nil
 }

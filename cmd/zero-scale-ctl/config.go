@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -45,7 +45,7 @@ type AppConfig struct {
 	Gateway     *GatewayConfig
 	Mounts      string
 	ScaleToZero bool
-	IdleTimeout string            // e.g. "60s", "5m" (optional custom idle timeout)
+	IdleTimeout string // e.g. "60s", "5m" (optional custom idle timeout)
 
 	// Process execution & launcher configuration
 	Args        string            // CLI arguments or subcommand (e.g. "serve")
@@ -82,14 +82,9 @@ func (a *AppConfig) SecondaryHosts() []string {
 }
 
 // AppName derives a clean short name from the canonical host (e.g. fdm.ffxm.cc -> fdm).
+// The rule lives in internal/appname so the gateway resolves the same ConfigMap name.
 func (a *AppConfig) AppName() string {
-	parts := strings.Split(a.CanonicalHost(), ".")
-	re := regexp.MustCompile("[^a-z0-9]")
-	clean := re.ReplaceAllString(strings.ToLower(parts[0]), "")
-	if clean == "" {
-		return "app"
-	}
-	return clean
+	return appname.Name(a.CanonicalHost())
 }
 
 func sha8(s string) string {
@@ -373,9 +368,7 @@ func LoadConfig(filePath string) (interface{}, error) {
 	// Also extract short name from hostname (e.g. hs from hs.ffxm.cc)
 	var hostShort string
 	if len(hostnames) > 0 {
-		parts := strings.Split(hostnames[0], ".")
-		re := regexp.MustCompile("[^a-z0-9]")
-		hostShort = re.ReplaceAllString(strings.ToLower(parts[0]), "")
+		hostShort = appname.Name(hostnames[0])
 	}
 
 	for _, cf := range configFiles {

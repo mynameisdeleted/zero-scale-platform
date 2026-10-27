@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/jwtauth"
 )
 
@@ -66,7 +65,7 @@ func isValidEnvName(name string) bool {
 }
 
 // StartTransientService executes systemd-run with dynamic environment injection
-func StartTransientService(host string, port int, binaryPath string, cfg *config.Config) error {
+func StartTransientService(host string, port int, binaryPath, namespace string, appData map[string]string) error {
 	unitName := fmt.Sprintf("app-%s", host)
 	typePath := binaryPath + ".type"
 
@@ -78,11 +77,7 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 		}
 	}
 
-	// Fetch dynamic app ConfigMap and Secret from Kubernetes API
-	shortName := strings.Split(host, ".")[0]
-	appCMName := "zero-scale-app-" + shortName
 	var appArgs string
-	appData, _ := FetchK8sResource("configmaps", appCMName, cfg.KubeNamespace)
 	if appData != nil {
 		appArgs = appData["args"]
 	}
@@ -123,7 +118,7 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 	if appData != nil {
 		// Set of internal platform configuration keys that should never be passed as process environment variables
 		ignoredKeys := map[string]bool{
-			"host": true, "url": true, "type": true, "mounts": true,
+			"host": true, "hosts": true, "url": true, "type": true, "mounts": true,
 			"scale-to-zero": true, "scale_to_zero": true,
 			"idle-timeout": true, "idle_timeout": true,
 			"database_configmap": true, "database_secret": true,
@@ -141,7 +136,7 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 			baseArgs = append(baseArgs, fmt.Sprintf("--setenv=%s=%s", k, v))
 		}
 		if dbCM := appData["database_configmap"]; dbCM != "" {
-			if cmData, err := FetchK8sResource("configmaps", dbCM, cfg.KubeNamespace); err == nil {
+			if cmData, err := FetchK8sResource("configmaps", dbCM, namespace); err == nil {
 				for k, v := range cmData {
 					if !isValidEnvName(k) {
 						continue
@@ -153,7 +148,7 @@ func StartTransientService(host string, port int, binaryPath string, cfg *config
 			}
 		}
 		if dbSec := appData["database_secret"]; dbSec != "" {
-			if secData, err := FetchK8sResource("secrets", dbSec, cfg.KubeNamespace); err == nil {
+			if secData, err := FetchK8sResource("secrets", dbSec, namespace); err == nil {
 				for k, v := range secData {
 					if !isValidEnvName(k) {
 						continue

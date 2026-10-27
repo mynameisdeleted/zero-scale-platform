@@ -12,10 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/banner"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/config"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/handlers"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/jwtauth"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/registry"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/runner"
 )
 
@@ -26,12 +28,14 @@ type Gateway struct {
 	lastActive     map[string]time.Time
 	inFlight       map[string]int
 	mu             sync.Mutex
+	apps           *registry.Registry
 }
 
 // New creates a new Gateway instance
-func New(cfg *config.Config) *Gateway {
+func New(cfg *config.Config, apps *registry.Registry) *Gateway {
 	return &Gateway{
 		cfg:            cfg,
+		apps:           apps,
 		allocatedPorts: make(map[string]int),
 		lastActive:     make(map[string]time.Time),
 		inFlight:       make(map[string]int),
@@ -96,10 +100,7 @@ func (g *Gateway) DiscoverExistingServices() {
 
 // ServeHTTP handles incoming HTTP requests, intercepts logs, and reverse proxies
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if strings.Contains(host, ":") {
-		host = strings.Split(host, ":")[0]
-	}
+	requestHost := strings.ToLower(appname.StripPort(r.Host))
 
 	// Filter out noisy static asset logging
 	isStatic := strings.HasPrefix(r.URL.Path, "/static/") ||
@@ -111,8 +112,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		strings.HasSuffix(r.URL.Path, ".jpg") ||
 		strings.HasSuffix(r.URL.Path, ".ico")
 	if !isStatic {
-		log.Printf("📥 [%s] %s %s", host, r.Method, r.URL.Path)
+		log.Printf("📥 [%s] %s %s", requestHost, r.Method, r.URL.Path)
 	}
+
+	// Every hostname of an app maps to its canonical host: one binary path, one unit, one config.
+	app := g.apps.Lookup(requestHost)
+	host := app.CanonicalHost
 
 	// Intercept log viewer requests
 	if r.URL.Path == "/_logs" || strings.HasPrefix(r.URL.Path, "/_logs/") {
@@ -120,23 +125,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	binaryPath := filepath.Join(g.cfg.AppsDir, host)
-	if !runner.FileExists(binaryPath) {
-		// Fallback lookup: match shortName prefix (e.g. bdash2 -> bdash2.kube.fairfaxmedia.net)
-		shortName := strings.Split(host, ".")[0]
-		entries, err := os.ReadDir(g.cfg.AppsDir)
-		if err == nil {
-			for _, entry := range entries {
-				if !entry.IsDir() && (strings.HasPrefix(entry.Name(), shortName+".") || entry.Name() == shortName) {
-					binaryPath = filepath.Join(g.cfg.AppsDir, entry.Name())
-					log.Printf("Resolved host %s to binary %s", host, binaryPath)
-					break
-				}
-			}
-		}
-	}
-	if !runner.FileExists(binaryPath) {
-		http.Error(w, fmt.Sprintf("Application %s not found", host), http.StatusNotFound)
+	binaryPath := g.resolveBinary(host, requestHost)
+	if binaryPath == "" {
+		http.Error(w, fmt.Sprintf("Application %s not found", requestHost), http.StatusNotFound)
 		return
 	}
 
@@ -181,7 +172,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		port = freePort
 
 		log.Printf("Host %s matches binary %s. Starting sandboxed systemd unit on port %d...", host, binaryPath, port)
-		if err := runner.StartTransientService(host, port, binaryPath, g.cfg); err != nil {
+		if err := runner.StartTransientService(host, port, binaryPath, g.cfg.KubeNamespace, app.Data); err != nil {
 			delete(g.allocatedPorts, host)
 			g.mu.Unlock()
 			log.Printf("Failed to start service %s: %v", host, err)
@@ -228,7 +219,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			signer := jwtauth.GetSigner()
-			token, err := signer.MintToken(email, user, groups, host)
+			token, err := signer.MintToken(email, user, groups, requestHost)
 			if err == nil {
 				req.Header.Set("X-ZeroScale-Token", token)
 				// Also set standard Bearer Authorization if not already populated
@@ -263,4 +254,28 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	proxy.ServeHTTP(w, r)
+}
+
+// resolveBinary finds the executable for an app: the canonical host's entry first,
+// then the request host's, then the legacy short-name prefix match. Returns "" if none exists.
+func (g *Gateway) resolveBinary(host, requestHost string) string {
+	for _, h := range []string{host, requestHost} {
+		if p := filepath.Join(g.cfg.AppsDir, h); runner.FileExists(p) {
+			return p
+		}
+	}
+	// Fallback lookup: match shortName prefix (e.g. bdash2 -> bdash2.kube.fairfaxmedia.net)
+	shortName := strings.Split(requestHost, ".")[0]
+	entries, err := os.ReadDir(g.cfg.AppsDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && (strings.HasPrefix(entry.Name(), shortName+".") || entry.Name() == shortName) {
+			p := filepath.Join(g.cfg.AppsDir, entry.Name())
+			log.Printf("Resolved host %s to binary %s", requestHost, p)
+			return p
+		}
+	}
+	return ""
 }
