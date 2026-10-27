@@ -1,0 +1,25 @@
+# Core gateway resources for one namespace. Pick the namespace here (or with
+# 'kustomize edit set namespace qa') and apply with: kubectl apply -k deploy/
+# The RoleBinding subject follows the namespace automatically.
+#
+# 'zero-scale-ctl gateway install' and 'zero-scale-ctl env create' render an HA
+# version of these (replicas, PDB, spread) and are the recommended path.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: default
+resources:
+  - rbac.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+replacements:
+  - source:
+      kind: ServiceAccount
+      name: zero-scale-gateway
+      fieldPath: metadata.namespace
+    targets:
+      - select:
+          kind: RoleBinding
+          name: zero-scale-gateway-binding
+        fieldPaths:
+          - subjects.[name=zero-scale-gateway].namespace

@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zero-scale-gateway
-  namespace: default
   labels:
     app: zero-scale-gateway
     app.kubernetes.io/name: zero-scale-gateway

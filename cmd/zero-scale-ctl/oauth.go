@@ -13,7 +13,32 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
 )
+
+// sharedOAuth returns the platform's shared auth host settings; Host is empty when
+// each app host has its own callback (the original mode).
+func sharedOAuth() platform.OAuthConfig {
+	if p, err := loadPlatform(); err == nil && p != nil && p.OAuth.Host != "" {
+		o := p.OAuth
+		if o.Namespace == "" {
+			o.Namespace = platformNamespace()
+		}
+		return o
+	}
+	return platform.OAuthConfig{}
+}
+
+// checkSharedOAuthHosts makes sure every app host can use the shared auth cookie.
+func checkSharedOAuthHosts(shared platform.OAuthConfig, hosts []string) error {
+	for _, h := range hosts {
+		if !strings.HasSuffix(h, shared.CookieDomain()) {
+			return fmt.Errorf("host %s is outside %s, so it cannot use the shared auth host %s", h, shared.CookieDomain(), shared.Host)
+		}
+	}
+	return nil
+}
 
 // OAuthSetupSecretName returns the Kubernetes Secret name for a shared oauth-setup profile.
 func OAuthSetupSecretName(setupName string) string {
@@ -202,6 +227,24 @@ func ReconcileOAuthSetup(setupName, oauthURL, oauthGroup string, appHosts []stri
 	oauthURL = strings.TrimRight(strings.TrimSpace(oauthURL), "/")
 
 	requiredCallbacks := collectAllSetupCallbacks(setupName, existingCM, appHosts)
+	shared := sharedOAuth()
+	callbackHosts := appHosts
+	if shared.Host != "" {
+		if err := checkSharedOAuthHosts(shared, appHosts); err != nil {
+			return err
+		}
+		if namespace != shared.Namespace {
+			// Apps in other namespaces (QA, branches) use the one oauth2-proxy behind the shared host.
+			if _, err := GetConfigMapData(cmName, shared.Namespace); err != nil {
+				return fmt.Errorf("oauth-setup '%s' does not exist in %s, where the shared auth host %s is served\n--> Run: zero-scale-ctl oauth-setup %s --url <oauth-url> --auth-host %s -n %s",
+					setupName, shared.Namespace, shared.Host, setupName, shared.Host, shared.Namespace)
+			}
+			fmt.Printf("--> Using shared OAuth2 setup '%s' at https://%s (namespace %s)\n", setupName, shared.Host, shared.Namespace)
+			return nil
+		}
+		requiredCallbacks = []string{fmt.Sprintf("https://%s/oauth2/callback", shared.Host)}
+		callbackHosts = []string{shared.Host}
+	}
 
 	// Credential resolution order:
 	// 1. Environment variables OAUTH_CLIENT_ID & OAUTH_CLIENT_SECRET
@@ -348,13 +391,13 @@ func ReconcileOAuthSetup(setupName, oauthURL, oauthGroup string, appHosts []stri
 	}
 
 	// Deploy or update shared oauth2-proxy-<setupName> Deployment & Service
-	if err := deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup, requiredCallbacks, namespace); err != nil {
+	if err := deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup, requiredCallbacks, namespace, shared); err != nil {
 		return fmt.Errorf("failed to deploy shared oauth2-proxy for '%s': %w", setupName, err)
 	}
 
-	// If appHosts were provided, apply the /oauth2 Ingress for those hosts
-	if len(appHosts) > 0 {
-		if err := ApplyOAuth2CallbackIngress(setupName, namespace, appHosts); err != nil {
+	// Route /oauth2 on the app hosts (or on the shared auth host) to the proxy
+	if len(callbackHosts) > 0 {
+		if err := ApplyOAuth2CallbackIngress(setupName, namespace, callbackHosts); err != nil {
 			return fmt.Errorf("failed to apply /oauth2 ingress: %w", err)
 		}
 	}
@@ -363,7 +406,7 @@ func ReconcileOAuthSetup(setupName, oauthURL, oauthGroup string, appHosts []stri
 }
 
 // deploySharedOAuth2Proxy deploys the shared oauth2-proxy Deployment and Service for setupName.
-func deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup string, requiredCallbacks []string, namespace string) error {
+func deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup string, requiredCallbacks []string, namespace string, shared platform.OAuthConfig) error {
 	svcName := OAuthProxyServiceName(setupName)
 	secName := OAuthSetupSecretName(setupName)
 
@@ -424,6 +467,10 @@ func deploySharedOAuth2Proxy(setupName, oauthURL, oauthGroup string, requiredCal
 	}
 
 	extraArgs := ""
+	if shared.Host != "" {
+		// One callback host; the session cookie covers every host under its parent domain.
+		extraArgs += fmt.Sprintf("\n        - --redirect-url=https://%s/oauth2/callback\n        - --cookie-domain=%s", shared.Host, shared.CookieDomain())
+	}
 	if len(whitelistArgs) > 0 {
 		extraArgs += "\n" + strings.Join(whitelistArgs, "\n")
 	}

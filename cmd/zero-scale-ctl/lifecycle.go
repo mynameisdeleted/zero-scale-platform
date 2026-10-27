@@ -106,6 +106,9 @@ func runDeleteApp(args []string, namespace string) error {
 }
 
 func removeOAuthCallbacks(setup string, hosts []string, namespace string) {
+	if sharedOAuth().Host != "" {
+		return // one shared callback; nothing per host to remove
+	}
 	cmName := OAuthSetupConfigMapName(setup)
 	cm, err := GetConfigMapData(cmName, namespace)
 	if err != nil {
@@ -146,6 +149,11 @@ func dropAppDatabase(appName string, hosts []string, data map[string]string, nam
 		engine = "postgres"
 	}
 	app := &AppConfig{Hostnames: hosts}
+	e, err := loadEnv(namespace)
+	if err != nil {
+		return err
+	}
+	app.Environment, app.envBound = e, true
 	target, op, err := resolveDBTarget(engine, namespace)
 	if err != nil {
 		return err

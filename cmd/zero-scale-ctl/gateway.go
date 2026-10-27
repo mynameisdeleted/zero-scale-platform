@@ -230,6 +230,33 @@ func splitHostArgs(args []string) (host string, rest []string) {
 	return host, rest
 }
 
+// resolveRouteTLS turns --tls-secret / --issuer into the ingress.tls value, checking
+// that an issuer used for a wildcard can solve DNS-01.
+func resolveRouteTLS(host, secret, issuer string) (string, error) {
+	switch {
+	case secret != "" && issuer != "":
+		return "", fmt.Errorf("use either --tls-secret or --issuer, not both")
+	case secret != "":
+		return "secret:" + secret, nil
+	case issuer != "":
+		out, err := RunKubectl([]string{"get", "clusterissuer", issuer, "-o", "json"}, "")
+		if err != nil {
+			return "", fmt.Errorf("ClusterIssuer %q not found: %w", issuer, err)
+		}
+		if strings.HasPrefix(host, "*.") {
+			ok, err := platform.IssuerSupportsWildcard([]byte(out))
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				return "", fmt.Errorf("ClusterIssuer %q is ACME without a DNS-01 solver; wildcard certificates need DNS-01", issuer)
+			}
+		}
+		return "issuer:" + issuer, nil
+	}
+	return "", nil
+}
+
 func ingressAddHost(args []string) error {
 	host, rest := splitHostArgs(args)
 	fs := flag.NewFlagSet("ingress add-host", flag.ExitOnError)
@@ -243,28 +270,9 @@ func ingressAddHost(args []string) error {
 	if err := platform.ValidateHost(host); err != nil {
 		return err
 	}
-	if *secret != "" && *issuer != "" {
-		return fmt.Errorf("use either --tls-secret or --issuer, not both")
-	}
-	tls := ""
-	switch {
-	case *secret != "":
-		tls = "secret:" + *secret
-	case *issuer != "":
-		out, err := RunKubectl([]string{"get", "clusterissuer", *issuer, "-o", "json"}, "")
-		if err != nil {
-			return fmt.Errorf("ClusterIssuer %q not found: %w", *issuer, err)
-		}
-		if strings.HasPrefix(host, "*.") {
-			ok, err := platform.IssuerSupportsWildcard([]byte(out))
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return fmt.Errorf("ClusterIssuer %q is ACME without a DNS-01 solver; wildcard certificates need DNS-01", *issuer)
-			}
-		}
-		tls = "issuer:" + *issuer
+	tls, err := resolveRouteTLS(host, *secret, *issuer)
+	if err != nil {
+		return err
 	}
 
 	p, err := loadPlatform()
@@ -360,7 +368,7 @@ func hasString(list []string, s string) bool {
 // hostsCoveredByRoutes reports whether every host is served by a routed platform ingress host
 // in the same namespace as this app's gateway.
 func hostsCoveredByRoutes(hosts []string, namespace string) bool {
-	p, err := loadPlatform()
+	p, err := loadPlatformFor(namespace)
 	if err != nil || p == nil || len(p.Ingress.Hosts) == 0 || p.Gateway.Namespace != namespace {
 		return false
 	}

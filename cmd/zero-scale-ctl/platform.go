@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/env"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
 )
 
@@ -26,11 +27,53 @@ func platformNamespace() string {
 	return platform.DefaultNamespace
 }
 
-// loadPlatform reads the platform ConfigMap. It returns nil, nil when none exists yet.
-func loadPlatform() (*platform.Config, error) {
+// loadPlatformData reads the platform ConfigMap's data. It returns nil, nil when none exists yet.
+func loadPlatformData() (map[string]string, error) {
 	out, err := RunKubectl([]string{"get", "configmap", platform.ConfigMapName, "-n", platformNamespace(), "-o", "json"}, "")
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+		if isNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return configMapDataFromJSON(out)
+}
+
+// loadPlatform reads the platform ConfigMap. It returns nil, nil when none exists yet.
+func loadPlatform() (*platform.Config, error) {
+	data, err := loadPlatformData()
+	if err != nil || data == nil {
+		return nil, err
+	}
+	return platform.FromData(data)
+}
+
+// loadPlatformFor is the platform config as seen from namespace: an environment's
+// zero-scale-env overrides (its own DB cluster, its own routes and gateway) applied.
+func loadPlatformFor(namespace string) (*platform.Config, error) {
+	data, err := loadPlatformData()
+	if err != nil {
+		return nil, err
+	}
+	e, err := loadEnv(namespace)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil && e == nil {
+		return nil, nil
+	}
+	if data == nil {
+		data = map[string]string{}
+	}
+	return platform.FromData(e.Overlay(data, namespace))
+}
+
+// loadEnv reads namespace's zero-scale-env ConfigMap. It returns nil, nil when the
+// namespace is not a zero-scale environment, which behaves like the primary env.
+func loadEnv(namespace string) (*env.Config, error) {
+	out, err := RunKubectl([]string{"get", "configmap", env.ConfigMapName, "-n", namespace, "-o", "json"}, "")
+	if err != nil {
+		if isNotFound(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -39,12 +82,55 @@ func loadPlatform() (*platform.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return platform.FromData(data)
+	return env.FromData(data)
+}
+
+func isNotFound(err error) bool {
+	return strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found")
+}
+
+// bindEnv attaches namespace's environment to app and expands ${ENV_SUFFIX} and
+// ${ENV} in its hosts, args and env values. It is safe to call more than once.
+func bindEnv(app *AppConfig, namespace string) error {
+	if app.envBound {
+		return nil
+	}
+	e, err := loadEnv(namespace)
+	if err != nil {
+		return fmt.Errorf("reading %s in namespace %s: %w", env.ConfigMapName, namespace, err)
+	}
+	for i, h := range app.Hostnames {
+		h = strings.ToLower(e.Expand(h))
+		if strings.Contains(h, "${") {
+			return fmt.Errorf("hostname %q: only ${ENV_SUFFIX} and ${ENV} can be used in hostnames", h)
+		}
+		if err := e.CheckHost(h); err != nil {
+			return err
+		}
+		app.Hostnames[i] = h
+	}
+	app.Args = e.Expand(app.Args)
+	app.Launcher = e.Expand(app.Launcher)
+	app.PreStart = e.Expand(app.PreStart)
+	app.InitCmd = e.Expand(app.InitCmd)
+	for k, v := range app.Env {
+		app.Env[k] = e.Expand(v)
+	}
+	app.Environment = e
+	app.envBound = true
+	if e != nil {
+		fmt.Printf("--> Environment '%s' (namespace %s): hosts %v\n", e.Name, namespace, app.Hostnames)
+	}
+	return nil
 }
 
 // Owner identifies this app's databases for later cleanup.
 func (a *AppConfig) Owner(namespace string) platform.Owner {
-	return platform.Owner{App: a.AppName(), Namespace: namespace}
+	o := platform.Owner{App: a.AppName(), Namespace: namespace}
+	if a.Environment.Scoped() {
+		o.Env = a.Environment.Name
+	}
+	return o
 }
 
 var warnedNoPlatform bool
@@ -52,7 +138,7 @@ var warnedNoPlatform bool
 // resolveDBTarget picks the database cluster for engine: the platform ConfigMap when
 // present, otherwise the pre-ConfigMap defaults (CNPG ha-postgres, shared-mysql).
 func resolveDBTarget(engine, namespace string) (*platform.DBTarget, *platform.Operator, error) {
-	p, err := loadPlatform()
+	p, err := loadPlatformFor(namespace)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading platform config: %w", err)
 	}

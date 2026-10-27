@@ -24,6 +24,23 @@ type Config struct {
 	Redis    string    // host:port
 	Ingress  IngressConfig
 	Gateway  GatewayConfig
+	OAuth    OAuthConfig
+}
+
+// OAuthConfig, when Host is set, puts every OAuth-protected app behind one callback
+// host (auth.apps.example.com) served by the oauth2-proxy in Namespace, with a cookie
+// shared across the parent domain. New hosts then need no provider changes.
+type OAuthConfig struct {
+	Host      string
+	Namespace string
+}
+
+// CookieDomain is the parent domain of the shared auth host (".apps.example.com").
+func (o OAuthConfig) CookieDomain() string {
+	if i := strings.Index(o.Host, "."); i >= 0 {
+		return o.Host[i:]
+	}
+	return ""
 }
 
 // StorageConfig names the HA storage classes.
@@ -115,6 +132,8 @@ func (c *Config) ToData() map[string]string {
 	set("gateway.namespace", c.Gateway.Namespace)
 	set("gateway.service", c.Gateway.Service)
 	set("gateway.managedBy", c.Gateway.ManagedBy)
+	set("oauth.host", c.OAuth.Host)
+	set("oauth.namespace", c.OAuth.Namespace)
 	return d
 }
 
@@ -128,6 +147,7 @@ func FromData(d map[string]string) (*Config, error) {
 		Redis:   d["redis.service"],
 		Ingress: IngressConfig{Class: d["ingress.class"]},
 		Gateway: GatewayConfig{Namespace: d["gateway.namespace"], Service: d["gateway.service"], ManagedBy: d["gateway.managedBy"]},
+		OAuth:   OAuthConfig{Host: d["oauth.host"], Namespace: d["oauth.namespace"]},
 	}
 	for _, h := range strings.Split(d["ingress.hosts"], ",") {
 		if h = strings.TrimSpace(h); h != "" {

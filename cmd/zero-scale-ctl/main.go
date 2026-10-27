@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/platform"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,21 +28,32 @@ Platform setup:
                      [--name ha-postgres] [--namespace cnpg-system] [--instances 3] [--size 10Gi]
                      [--storage-class X] [--cluster-only] [--version V]
   gateway install    Deploy an HA gateway (replicas, PDB, spread, RBAC, RWX /opt/apps) [--image I] [--replicas 2]
-                     [--namespace zero-scale-system] [--rwx-class X] [--idle-timeout 60s] [--yes]
+                     [--namespace zero-scale-system] [--rwx-class X] [--volumes-size 20Gi] [--idle-timeout 60s] [--yes]
   gateway upgrade    Same as install, for an existing zero-scale-ctl managed gateway
   gateway status     Replicas, volume and which apps are running on which replica
   ingress add-host   Route a host or wildcard to the gateway: <host|*.domain> [--tls-secret S | --issuer I]
   ingress remove-host <host>
   ingress list
 
+Environments (QA, feature branches) on one cluster:
+  env create <name>  Namespace + quota + gateway for an environment; hosts use <app>${ENV_SUFFIX}.<domain>
+                     [--ttl 7d] [--namespace N] [--primary] [--replicas 1] [--image I]
+                     [--route '*.qa.example.com' --tls-secret S | --issuer I]
+                     [--postgres ns/name --postgres-service host:port] [--adopt] [--yes]
+  env delete <name>  Drop the env's databases, delete its volumes and namespace [--keep-data] [--force] [--yes]
+  env gc             Delete environments past their --ttl [--yes]
+  env list
+
 Commands:
   apply              Reconcile an app or redirect from a simple 10-line declarative config file
   oauth-setup <name> Create or update a shared ingress-nginx OAuth2 setup profile
+                     [--auth-host auth.apps.example.com: one callback host for every app and environment]
   status <host>      Inspect systemd service status of an app
   logs <host>        Fetch journalctl logs for an app unit
   list-apps          List all registered zero-scale applications
   delete-app <name>  Delete an application ConfigMap; --purge removes its Ingress, Secrets, host entries
-                     and OAuth routes and stops it everywhere; --drop-database also drops its database
+                     and OAuth routes and stops it everywhere; --drop-database also drops its database,
+                     --delete-volumes its volume data
   upload-binary      Upload a local binary directly to platform storage
   provision-db       Provision schema and credentials on shared database operator
 
@@ -223,7 +235,19 @@ func main() {
 		groupFlag := oauthFlags.String("group", "", "Allowed Gitea group(s)/org(s) (comma-separated)")
 		hostFlag := oauthFlags.String("host", "", "Optional application hostname(s) to register Redirect URI for")
 		nsFlag := oauthFlags.String("n", namespace, "Target namespace")
+		authHostFlag := oauthFlags.String("auth-host", "", "Serve every app's login from this one callback host (e.g. auth.apps.example.com), with a cookie for its parent domain; recorded in the platform config")
 		_ = oauthFlags.Parse(os.Args[3:])
+		if *authHostFlag != "" {
+			h := strings.ToLower(strings.TrimSpace(*authHostFlag))
+			if err := platform.ValidateHost(h); err != nil || strings.HasPrefix(h, "*.") || strings.Count(h, ".") < 2 {
+				fmt.Fprintf(os.Stderr, "ERROR: --auth-host must be a single host with a parent domain, like auth.apps.example.com\n")
+				os.Exit(1)
+			}
+			if err := updatePlatform(func(c *platform.Config) { c.OAuth = platform.OAuthConfig{Host: h, Namespace: *nsFlag} }); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				os.Exit(1)
+			}
+		}
 
 		var hosts []string
 		if *hostFlag != "" {
@@ -257,6 +281,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "env":
+		if err := runEnv(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "install":
 		if err := runInstall(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -286,10 +316,18 @@ func handleApply(configPath, expandPath, namespace string) error {
 
 	// 1. Edge Redirect Ingress Mode
 	if redir, ok := cfg.(*RedirectConfig); ok {
+		e, err := loadEnv(namespace)
+		if err != nil {
+			return err
+		}
+		redir.SourceHost, redir.TargetHost = e.Expand(redir.SourceHost), e.Expand(redir.TargetHost)
+		if err := e.CheckHost(redir.SourceHost); err != nil {
+			return err
+		}
 		fmt.Printf("==> Applying Edge NGINX Redirect: https://%s -> https://%s...\n", redir.SourceHost, redir.TargetHost)
 		ingressName := fmt.Sprintf("redirect-%s", redir.SourceHost)
 		ingressName = strings.ReplaceAll(ingressName, ".", "-")
-		err := ApplyRedirectIngress(ingressName, namespace, redir.SourceHost, redir.TargetHost, "zero-scale-gateway")
+		err = ApplyRedirectIngress(ingressName, namespace, redir.SourceHost, redir.TargetHost, "zero-scale-gateway")
 		if err != nil {
 			return fmt.Errorf("failed to apply redirect ingress: %w", err)
 		}
@@ -303,6 +341,9 @@ func handleApply(configPath, expandPath, namespace string) error {
 		return fmt.Errorf("unsupported configuration type")
 	}
 
+	if err := bindEnv(app, namespace); err != nil {
+		return err
+	}
 	fmt.Printf("==> Reconciling Zero-Scale Application '%s' for host '%s'...\n", app.AppName(), app.CanonicalHost())
 
 	// Step A: Provision database schema, user, and secrets

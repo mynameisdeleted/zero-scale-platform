@@ -88,6 +88,9 @@ func ProvisionPostgres(app *AppConfig, namespace string) (dbName, dbUser, dbPass
 
 // ProvisionDataLayer orchestrates database and Redis provisioning and populates k8s resources.
 func ProvisionDataLayer(app *AppConfig, namespace string) error {
+	if err := bindEnv(app, namespace); err != nil {
+		return err
+	}
 	secretData := make(map[string]string)
 	configMapData := make(map[string]string)
 
@@ -165,7 +168,7 @@ func ProvisionDataLayer(app *AppConfig, namespace string) error {
 
 	if app.Redis != nil {
 		redisEndpoint := fmt.Sprintf("shared-redis.%s.svc.cluster.local:6379", namespace)
-		if p, err := loadPlatform(); err == nil && p != nil && p.Redis != "" {
+		if p, err := loadPlatformFor(namespace); err == nil && p != nil && p.Redis != "" {
 			redisEndpoint = p.Redis
 		}
 		redisHost, redisPort, _ := strings.Cut(redisEndpoint, ":")

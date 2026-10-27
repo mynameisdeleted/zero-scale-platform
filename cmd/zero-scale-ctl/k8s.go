@@ -166,11 +166,15 @@ metadata:
 `)
 	if oauthSetupName != "" {
 		proxySvc := OAuthProxyServiceName(oauthSetupName)
+		proxyNS, signin := namespace, "https://$host/oauth2/start?rd=$escaped_request_uri"
+		if shared := sharedOAuth(); shared.Host != "" {
+			proxyNS, signin = shared.Namespace, "https://"+shared.Host+"/oauth2/start?rd=https://$host$escaped_request_uri"
+		}
 		b.WriteString(fmt.Sprintf(`    nginx.ingress.kubernetes.io/auth-url: "http://%s.%s.svc.cluster.local:4180/oauth2/auth"
-    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-signin: "%s"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Groups,X-Auth-Request-Preferred-Username"
     nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
-`, proxySvc, namespace))
+`, proxySvc, proxyNS, signin))
 	}
 	b.WriteString("spec:\n")
 	if cls := resolveIngressClass(); cls != "" {

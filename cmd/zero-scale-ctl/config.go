@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/appname"
+	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/env"
 	"git.fairfaxmedia.net/open-cream-cheese/zero-scale-platform/internal/volumes"
 	"os"
 	"path/filepath"
@@ -58,6 +59,9 @@ type AppConfig struct {
 	Secrets     map[string]string // Custom managed secrets (key -> type, e.g. "generate")
 	ConfigFiles []string          // Auxiliary config files to template and upload to /opt/apps/
 	Launcher    string            // Explicit full launcher script override (optional)
+
+	Environment *env.Config // the target namespace's environment; nil outside one (see bindEnv)
+	envBound    bool
 }
 
 // RedirectConfig represents an edge NGINX redirect rule.
@@ -95,12 +99,14 @@ func sha8(s string) string {
 
 // DBName returns the deterministic, conflict-free database name.
 func (a *AppConfig) DBName() string {
-	return fmt.Sprintf("db_%s_%s", a.AppName(), sha8(a.CanonicalHost()))
+	db, _ := a.Environment.DBNames(a.AppName(), sha8(a.CanonicalHost()))
+	return db
 }
 
 // DBUser returns the unique, unguessable database username.
 func (a *AppConfig) DBUser() string {
-	return fmt.Sprintf("u_%s_%s", a.AppName(), sha8(a.CanonicalHost()))
+	_, user := a.Environment.DBNames(a.AppName(), sha8(a.CanonicalHost()))
+	return user
 }
 
 // SecretName returns the Kubernetes Secret name for this app.
@@ -371,7 +377,8 @@ func LoadConfig(filePath string) (interface{}, error) {
 	// Also extract short name from hostname (e.g. hs from hs.ffxm.cc)
 	var hostShort string
 	if len(hostnames) > 0 {
-		hostShort = appname.Name(hostnames[0])
+		// Templated hosts (fdm${ENV_SUFFIX}.example.com) take the primary env's name.
+		hostShort = appname.Name((*env.Config)(nil).Expand(hostnames[0]))
 	}
 
 	for _, cf := range configFiles {

@@ -45,8 +45,10 @@ build-jwks-aggregator:
 # Kubernetes Manifests
 # -------------------------------------------------------------
 deploy-manifests:
-	@echo "==> Applying all Kubernetes manifests in deploy/ to namespace '$(NAMESPACE)'..."
-	kubectl apply -f deploy/ -n $(NAMESPACE)
+	@echo "==> Applying the core gateway manifests in deploy/ to namespace '$(NAMESPACE)'..."
+	@tmp=$$(mktemp -d) && cp deploy/*.yaml $$tmp/ && \
+	  sed -i 's/^namespace: .*/namespace: $(NAMESPACE)/' $$tmp/kustomization.yaml && \
+	  kubectl apply -k $$tmp; status=$$?; rm -rf $$tmp; exit $$status
 
 # -------------------------------------------------------------
 # Gateway Deployment (Binary + Service Update + Restart)

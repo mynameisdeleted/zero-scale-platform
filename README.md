@@ -237,6 +237,27 @@ All manifests and CLI operations support arbitrary namespaces via `-n` / `--name
 ```bash
 zero-scale-ctl apply -f ./myapp.conf -n production
 ```
+The manifests in `deploy/` carry no namespace. `deploy/kustomization.yaml` sets it for the core gateway resources (including the RoleBinding subject), so `kubectl apply -k deploy/` after `kustomize edit set namespace <ns>`, or `make deploy-manifests NAMESPACE=<ns>`, works in any namespace.
+
+### QA and Feature-Branch Environments
+<a id="environments"></a>
+Each environment is a namespace with its own gateway and `/opt/apps` volume, sharing the cluster's HA databases and storage classes. A `zero-scale-env` ConfigMap in the namespace records the environment.
+
+```bash
+zero-scale-ctl env create qa --replicas 2 --yes             # long-lived QA
+zero-scale-ctl env create feat-login --ttl 7d --yes         # a branch environment from CI
+zero-scale-ctl apply -f fdm.conf -n feat-login
+zero-scale-ctl env list
+zero-scale-ctl env delete feat-login --yes                  # drops its databases, volumes and namespace
+zero-scale-ctl env gc --yes                                 # deletes environments past their TTL (run from cron or CI)
+```
+
+- **Hosts.** Write hostnames as `fdm${ENV_SUFFIX}.apps.example.com`. Outside an environment, or in one created with `--primary`, the suffix is empty (`fdm.apps.example.com`); in `qa` it is `fdm-qa.apps.example.com`. Keeping one label level lets one `*.apps.example.com` certificate cover every environment. `${ENV}` expands to the environment name in hosts, args and env values. In a non-primary environment, `apply` refuses hosts that do not carry the suffix (or fall under the environment's own `--route`), so two environments never claim the same host.
+- **Routing.** Apps in an environment get exact-host Ingresses pointing at that environment's gateway. The platform's wildcard route stays with the primary gateway. Use `env create --route '*.qa.apps.example.com'` to give an environment its own wildcard instead.
+- **Databases.** Names become `db_<env>_<app>_<hash>` and `u_<env>_<app>_<hash>` (user names stay within MySQL's 32 characters). Postgres databases carry an owner comment naming the environment, and `env delete` only drops databases whose comment matches. The primary environment keeps the original `db_<app>_<hash>` names, so existing databases are found again. `--postgres ns/name --postgres-service host:port` points one environment at its own cluster.
+- **Volumes.** `env delete` switches the namespace's PersistentVolumes to the `Delete` reclaim policy before deleting the namespace, so Longhorn frees them. `--keep-data` keeps databases and volumes.
+- **Quota.** Each environment gets a ResourceQuota on pods, claims and storage (`--quota-pods`, `--quota-storage`). It does not limit CPU or memory, so the gateway needs no resource requests.
+- **OAuth.** `zero-scale-ctl oauth-setup <name> --url <provider> --auth-host auth.apps.example.com -n zero-scale-system` serves every login from one callback host with a cookie for `.apps.example.com`. Apps in any environment then point at that one oauth2-proxy, and new branch hosts need no change at the OAuth provider. Hosts outside the cookie domain are refused.
 
 ---
 
@@ -256,8 +277,11 @@ make push
 
 ### 3. Deploy to Kubernetes
 ```bash
-# Apply all core platform manifests (ServiceAccount, RBAC, PVC, Deployment, Service, Ingress):
-kubectl apply -f deploy/
+# Recommended: an HA gateway rendered by the CLI
+zero-scale-ctl gateway install --image <registry>/zero-scale:<tag> --yes
+
+# Or the plain manifests (ServiceAccount, RBAC, PVC, Deployment, Service) in any namespace:
+make deploy-manifests NAMESPACE=zero-scale-system
 
 # Or deploy via Makefile:
 make deploy
