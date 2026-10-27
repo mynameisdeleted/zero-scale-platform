@@ -1,0 +1,8 @@
+{"items":[
+ {"metadata":{"namespace":"default","name":"gw-1","labels":{"app":"zero-scale-gateway"}},"spec":{"nodeName":"steve-disks"},"status":{"phase":"Running"}},
+ {"metadata":{"namespace":"qa","name":"gw-a","labels":{"app":"zero-scale-gateway"}},"spec":{"nodeName":"sv2d"},"status":{"phase":"Running"}},
+ {"metadata":{"namespace":"qa","name":"gw-b","labels":{"app":"zero-scale-gateway"}},"spec":{"nodeName":"didi-macbookpro14-3"},"status":{"phase":"Running"}},
+ {"metadata":{"namespace":"default","name":"o-1","labels":{"app":"oauth2-proxy-mdm"}},"spec":{"nodeName":"sv2d"},"status":{"phase":"Running"}},
+ {"metadata":{"namespace":"default","name":"o-2","labels":{"app":"oauth2-proxy-mdm"}},"spec":{"nodeName":"sv2d"},"status":{"phase":"Running"}},
+ {"metadata":{"namespace":"default","name":"o-old","labels":{"app":"oauth2-proxy-mdm"}},"spec":{"nodeName":"steve-disks"},"status":{"phase":"Failed"}}
+]}

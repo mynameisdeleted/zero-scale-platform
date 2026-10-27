@@ -1,0 +1,68 @@
+{
+ "items": [
+  {
+   "metadata": {
+    "namespace": "default",
+    "name": "zero-scale-gateway"
+   },
+   "spec": {
+    "selector": {
+     "app": "zero-scale-gateway"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "namespace": "qa",
+    "name": "zero-scale-gateway"
+   },
+   "spec": {
+    "selector": {
+     "app": "zero-scale-gateway"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "namespace": "default",
+    "name": "oauth2-proxy-mdm"
+   },
+   "spec": {
+    "selector": {
+     "app": "oauth2-proxy-mdm"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "namespace": "default",
+    "name": "external"
+   },
+   "spec": {}
+  },
+  {
+   "metadata": {
+    "namespace": "kourier-system",
+    "name": "kourier"
+   },
+   "spec": {
+    "type": "LoadBalancer",
+    "externalIPs": [
+     "192.168.1.134",
+     "10.9.9.9"
+    ],
+    "selector": {
+     "app": "3scale-kourier-gateway"
+    },
+    "ports": [
+     {
+      "port": 80
+     },
+     {
+      "port": 443
+     }
+    ]
+   }
+  }
+ ]
+}

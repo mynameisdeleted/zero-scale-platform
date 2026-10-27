@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,28 @@ func TestDoctorRunsReadOnly(t *testing.T) {
 	for _, line := range strings.Split(readLog(t, log), "\n") {
 		if strings.HasPrefix(line, "kubectl ") && !strings.HasPrefix(line, "kubectl get ") {
 			t.Errorf("doctor made a non-read call: %s", line)
+		}
+	}
+}
+
+func TestDoctorReportsSingleNodeFailures(t *testing.T) {
+	fakeKubectl(t, `  "get ingress -A -o json") cat "$F/spof/ingress.json" ;;
+  "get service -A -o json") cat "$F/spof/service.json" ;;
+  "get pods -A -o json") cat "$F/spof/pods.json" ;;
+  "get nodes -o json") cat "$F/spof/nodes.json" ;;`)
+	out := captureStdout(t, func() {
+		if err := runDoctor(nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{
+		"==> Single node failure",
+		"kourier-system/kourier claims 192.168.1.134 (node steve-disks)",
+		"default/zero-scale-gateway: 1 pod, on steve-disks (fdm.ffxm.cc, hs.ffxm.cc)",
+		"1 of 3 Ingress backends survive",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output missing %q\n%s", want, out)
 		}
 	}
 }
@@ -264,4 +287,25 @@ func TestDeleteAppPurge(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
 	}
+}
+
+// captureStdout returns what fn prints to stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	defer func() { os.Stdout = old }()
+	fn()
+	w.Close()
+	os.Stdout = old
+	return <-done
 }

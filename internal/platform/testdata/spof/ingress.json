@@ -1,0 +1,6 @@
+{"items":[
+ {"metadata":{"namespace":"default","name":"zero-scale-fdm"},"spec":{"rules":[{"host":"fdm.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}},{"host":"hs.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}}]}},
+ {"metadata":{"namespace":"qa","name":"zero-scale-mockqa"},"spec":{"rules":[{"host":"mock-qa.ffxm.cc","http":{"paths":[{"backend":{"service":{"name":"zero-scale-gateway"}}}]}}]}},
+ {"metadata":{"namespace":"default","name":"oauth"},"spec":{"rules":[{"host":"fdm.ffxm.cc","http":{"paths":[{"path":"/oauth2","backend":{"service":{"name":"oauth2-proxy-mdm"}}}]}}]}},
+ {"metadata":{"namespace":"default","name":"ext"},"spec":{"defaultBackend":{"service":{"name":"external"}}}}
+]}

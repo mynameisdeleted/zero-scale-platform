@@ -1,0 +1,55 @@
+{
+ "items": [
+  {
+   "metadata": {
+    "name": "steve-disks"
+   },
+   "status": {
+    "addresses": [
+     {
+      "type": "InternalIP",
+      "address": "192.168.1.134"
+     },
+     {
+      "type": "Hostname",
+      "address": "steve-disks"
+     }
+    ]
+   }
+  },
+  {
+   "metadata": {
+    "name": "sv2d"
+   },
+   "status": {
+    "addresses": [
+     {
+      "type": "InternalIP",
+      "address": "192.168.1.111"
+     },
+     {
+      "type": "Hostname",
+      "address": "sv2d"
+     }
+    ]
+   }
+  },
+  {
+   "metadata": {
+    "name": "didi-macbookpro14-3"
+   },
+   "status": {
+    "addresses": [
+     {
+      "type": "InternalIP",
+      "address": "192.168.1.131"
+     },
+     {
+      "type": "Hostname",
+      "address": "didi-macbookpro14-3"
+     }
+    ]
+   }
+  }
+ ]
+}

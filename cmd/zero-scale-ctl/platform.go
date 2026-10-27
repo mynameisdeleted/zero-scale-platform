@@ -249,6 +249,7 @@ func runDoctor(args []string) error {
 		return err
 	}
 	printReport(r)
+	printNodeFailure(r)
 
 	fmt.Println("\n==> Next steps")
 	current, _ := loadPlatform()
@@ -277,6 +278,42 @@ func runDoctor(args []string) error {
 		fmt.Println("    No zero-scale gateway found: 'zero-scale-ctl gateway install' (or deploy your Helm chart).")
 	}
 	return nil
+}
+
+// printNodeFailure lists what one node going down would take off the air, and
+// Services that hijack a node's IP so that node cannot serve ingress traffic.
+func printNodeFailure(r *platform.Report) {
+	fmt.Println("\n==> Single node failure")
+	var defaults []string
+	for _, sc := range r.StorageClasses {
+		if sc.Default {
+			defaults = append(defaults, sc.Name)
+		}
+	}
+	if len(defaults) > 1 {
+		fmt.Printf("    ⚠️  %d default StorageClasses (%s): PVCs without a class land on whichever the API server picks.\n", len(defaults), strings.Join(defaults, ", "))
+	}
+	claims, err := platform.NodeIPClaims(kubectlKube{})
+	if err != nil {
+		fmt.Printf("    (could not check Service externalIPs: %v)\n", err)
+	}
+	for _, c := range claims {
+		fmt.Printf("    ❌ %s/%s claims %s (node %s) on ports %v: that node's ingress on those ports goes to this Service instead.\n", c.Namespace, c.Service, c.IP, c.Node, c.Ports)
+	}
+	exps, err := platform.IngressExposures(kubectlKube{})
+	if err != nil {
+		fmt.Printf("    (could not check Ingress backends: %v)\n", err)
+		return
+	}
+	ok := 0
+	for _, e := range exps {
+		if e.Survives() {
+			ok++
+			continue
+		}
+		fmt.Printf("    ❌ %s/%s: %s (%s)\n", e.Namespace, e.Service, e.Problem(), strings.Join(e.Hosts, ", "))
+	}
+	fmt.Printf("    %d of %d Ingress backends survive losing any one node.\n", ok, len(exps))
 }
 
 func printReport(r *platform.Report) {
