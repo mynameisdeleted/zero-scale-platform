@@ -890,6 +890,33 @@ func (c *Collector) getSystemSliceDir() string {
 	return found
 }
 
+var (
+	fqdnHostnameRegex = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+
+	nonDomainFileExtensions = map[string]bool{
+		"yaml": true, "yml": true, "json": true, "toml": true, "ini": true,
+		"conf": true, "cfg": true, "txt": true, "md": true, "log": true,
+		"key": true, "crt": true, "pem": true, "pub": true, "bak": true,
+		"old": true, "tmp": true, "sh": true, "bash": true, "py": true,
+		"go": true, "type": true, "gz": true, "tar": true, "zip": true,
+	}
+)
+
+// isValidFQDN checks whether a candidate string is a valid fully qualified domain name
+// and not a configuration/source/credential file name (e.g. headscale-config.yaml or hs_noise.key).
+func isValidFQDN(h string) bool {
+	h = strings.TrimSpace(h)
+	if !fqdnHostnameRegex.MatchString(h) {
+		return false
+	}
+	parts := strings.Split(h, ".")
+	tld := strings.ToLower(parts[len(parts)-1])
+	if nonDomainFileExtensions[tld] {
+		return false
+	}
+	return true
+}
+
 func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 	knownDescriptions := map[string]string{
 		"bdash2.kube.fairfaxmedia.net":    "High-Performance CloudNativePG Builds & Parts Dashboard",
@@ -919,7 +946,7 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 			if err := json.Unmarshal(cmBytes, &cmList); err == nil {
 				for _, item := range cmList.Items {
 					h := strings.TrimSpace(item.Data["host"])
-					if h != "" {
+					if h != "" && isValidFQDN(h) {
 						appType := item.Data["type"]
 						if appType == "" {
 							appType = "elf"
@@ -944,8 +971,8 @@ func (c *Collector) collectZeroScaleApps() []ZeroScaleApp {
 	// 3. Discover from /opt/apps directory (symlinks and binaries)
 	if entries, err := os.ReadDir(c.appsDir); err == nil {
 		for _, e := range entries {
-			name := e.Name()
-			if strings.Contains(name, ".") && !strings.HasSuffix(name, ".type") && !strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".bak") {
+			name := strings.TrimSpace(e.Name())
+			if isValidFQDN(name) {
 				if _, exists := appMap[name]; !exists {
 					appType := "elf"
 					typePath := filepath.Join(c.appsDir, name+".type")
@@ -1131,7 +1158,7 @@ func (c *Collector) parseIngressSites(raw []byte) []SiteGroup {
 			for _, ing := range ingList.Items {
 				for _, r := range ing.Spec.Rules {
 					h := strings.TrimSpace(r.Host)
-					if h == "" || seenHosts[h] {
+					if h == "" || !isValidFQDN(h) || seenHosts[h] {
 						continue
 					}
 					seenHosts[h] = true
